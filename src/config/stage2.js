@@ -1,33 +1,33 @@
-// ── Stage 2 — the harder finale (design 6.9/6.10) ────────────────────────────
-// Same shape as stage 1. Entered by auto-advance after the stage-1 boss dies; the
-// army carries over floored to startCount (Decision 5). Authoring rule: the first
-// growth gate (z24) precedes every full-width block / enemy, and pre-growth mandatory
-// drain is 0, so even a floored army (startCount) can grow before it can be wiped.
+// ── Stage 2 — Normal baseline, the mid finale (design 2026-06-12-difficulty-tiers) ──
+// Same shape as stage 1. Entered by auto-advance after the stage-1 boss dies; the army carries
+// over floored to startCount. HARD is the shared transform (see difficulty.js). Authoring rule:
+// the first growth gate (z24) precedes every full-width block / enemy, so even a floored army
+// can grow before it can be threatened.
 //
-// Floor-path gate sim (best side), start = startCount = 15:
-//   z24  +12 vs ×2 -> ×2 => 30
-//   z64  ×2 vs +30 -> tie 60 => 60
-//   z108 +40 vs −20-> +40 => 100
-//   z156 ×2 vs +25 -> ×2 => 200 (cap)
-//   z206 +20 vs −15-> +20 => 200
-//   z252 +30 vs +15-> +30 => 200
-// Both the floored army and a big carried army clear every mandatory threat before
-// contact and beat the boss in time. Verified by scripts/verify-balance.mjs.
+// Count-dependent BOTH-GREEN gates (+N vs ×M; the better side flips with your count).
+// Floor-path (best side), start = startCount = 20:
+//   z24  +18 vs ×2  -> ×2  => 40
+//   z64  ×2  vs +35 -> ×2  => 80
+//   z108 +50 vs ×2  -> ×2  => 160
+//   z154 ×2  vs +40 -> ×2  => 200 (cap)
+//   z204 +30 vs ×2  -> ×2  => 200
+//   z252 ×2  vs +25 -> ×2  => 200
+// Both the floored army and a big carried army reach the boss at the 200 cap and clear every
+// mandatory threat before contact on BOTH tiers. Verified by scripts/verify-balance.mjs.
 //
-// Difficulty (rebalance 2026-06-12): the finale boss has hp 1600 + heavier offense
-// (burst 13 @ 1.1s, faster bullets) so the capped 200-army fight lasts ~9s and an
-// undodged army is drained to ~31. Power-ups nerfed to an edge (dmgCap 1.3 × rapid 1.5)
-// → no instant melt (~4.6s even buffed at cap). Clean run still wins; eating bullets loses.
+// Difficulty: 52s clock; boss = a 6-bullet fan (4 soldiers each) at a faster 1.2s cadence,
+// enraging under 33% HP. Heavier mandatory threats than stage 1; clean still wins, sloppy/
+// careless have already lost back in stage 1 (the chain never reaches here on a bad run).
 
 export default {
   id: 'stage-2',
   label: 'STAGE 2',
 
-  timeLimit: 65,
-  runSpeed: 16,
+  timeLimit: 52,
+  runSpeed: 18,
   roadHalf: 3.0,
   crowdCap: 200,
-  startCount: 15, // carry-over floor
+  startCount: 20, // carry-over floor
   seed: 4242,
   bossStandoff: 20,
 
@@ -36,7 +36,15 @@ export default {
     fireRange: 22,
   },
 
-  boss: { z: 360, hp: 1600, fireInterval: 1.1, burst: 13, bulletSpeed: 25 },
+  boss: {
+    z: 400,
+    hp: 1700,
+    fireInterval: 1.2,
+    bullets: 6,
+    bulletDamage: 4,
+    bulletSpeed: 25,
+    enrage: { below: 0.33, fireIntervalMult: 0.7, bulletsAdd: 2 },
+  },
 
   powerupTuning: {
     rapidMult: 1.5,
@@ -48,24 +56,24 @@ export default {
   },
 
   gates: [
-    { z: 24, left: ['add', 12], right: ['mul', 2] },
-    { z: 64, left: ['mul', 2], right: ['add', 30] },
-    { z: 108, left: ['add', 40], right: ['sub', 30] },
-    { z: 156, left: ['mul', 2], right: ['add', 25] },
-    { z: 206, left: ['add', 20], right: ['sub', 25] },
-    { z: 252, left: ['add', 30], right: ['add', 15] },
+    { z: 24, left: ['add', 18], right: ['mul', 2] },
+    { z: 64, left: ['mul', 2], right: ['add', 35] },
+    { z: 108, left: ['add', 50], right: ['mul', 2] },
+    { z: 154, left: ['mul', 2], right: ['add', 40] },
+    { z: 204, left: ['add', 30], right: ['mul', 2] },
+    { z: 252, left: ['mul', 2], right: ['add', 25] },
   ],
 
   obstacles: [
-    { z: 40, hp: 25, xRange: [-3.0, 0.3] }, // dodge right
-    { z: 132, hp: 90, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
-    { z: 276, hp: 40, xRange: [-0.3, 3.0] }, // dodge left
-    { z: 230, hp: 130, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
+    { z: 44, hp: 25, xRange: [-3.0, 0.3] }, // dodge right
+    { z: 130, hp: 70, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
+    { z: 170, hp: 40, xRange: [-0.3, 3.0] }, // dodge left
+    { z: 240, hp: 120, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
   ],
 
   enemies: [
-    { z: 184, hp: 70, xRange: [-3.0, 3.0], marchSpeed: 5 },
-    { z: 300, hp: 150, xRange: [-3.0, 3.0], marchSpeed: 6 },
+    { z: 210, hp: 80, xRange: [-3.0, 3.0], marchSpeed: 2.5 },
+    { z: 300, hp: 110, xRange: [-3.0, 3.0], marchSpeed: 2.5 },
   ],
 
   powerups: [

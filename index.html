@@ -112,6 +112,15 @@
       transition: transform 0.05s ease, box-shadow 0.05s ease;
     }
     .btn:active { transform: translateY(4px); box-shadow: 0 4px 0 #15803d, 0 6px 12px rgba(0,0,0,0.35); }
+
+    /* difficulty selector on the start screen */
+    .tier-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; justify-content: center; }
+    .btn-hard {
+      background: linear-gradient(180deg, #ef4444, #b91c1c);
+      box-shadow: 0 8px 0 #7f1d1d, 0 12px 24px rgba(0,0,0,0.35);
+    }
+    .btn-hard:active { box-shadow: 0 4px 0 #7f1d1d, 0 6px 12px rgba(0,0,0,0.35); }
+
     .hint { font-size: 14px; opacity: 0.7; max-width: 30ch; }
     #screen-win h1 { color: #34d399; }
     #screen-lose h1 { color: #f87171; }
@@ -141,9 +150,12 @@
   <!-- Start screen -->
   <div id="screen-start" class="screen show">
     <h1>SWARM RUN</h1>
-    <p>Steer through gates to grow your squad of gunners. They auto-fire — more soldiers, more firepower. Shoot down barricades and enemy squads, grab power-ups, dodge the boss's shots, and crush both bosses before time runs out.</p>
-    <button id="btn-start" class="btn">START</button>
-    <div class="hint">Drag / swipe or use ← → (A / D) to steer.</div>
+    <p>Steer through gates to grow your squad of gunners. They auto-fire — more soldiers, more firepower. Track your count to pick the better gate, shoot down barricades and enemy squads, dodge the boss's fan of shots, and crush all three bosses before time runs out.</p>
+    <div class="tier-row">
+      <button id="btn-start-normal" class="btn">NORMAL</button>
+      <button id="btn-start-hard" class="btn btn-hard">HARD</button>
+    </div>
+    <div class="hint">Normal is a fair fight. Hard tightens the clock and the boss bites harder. Drag / swipe or ← → (A / D) to steer.</div>
   </div>
 
   <!-- Win screen -->

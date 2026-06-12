@@ -12,6 +12,7 @@ import { soldierModelReady } from './util/models.js'
 import { tickSoldiers } from './util/soldier.js'
 import { HUD } from './ui/HUD.js'
 import { Screens } from './ui/Screens.js'
+import { applyDifficulty, PRESETS } from './config/difficulty.js'
 
 // Orchestrator + state machine + game loop (design 6.1/6.4/6.5).
 // state: MENU | PLAYING | WIN | LOSE ; phase (while PLAYING): RUN | BOSS.
@@ -67,8 +68,11 @@ export class Game {
       radius: 0.06,
       length: 0.6,
     })
+    // Cap sized for the fan: worst case ≈ largest base bullets (~6) + Hard(+2) + enrage(+2) = ~10
+    // per volley, and at the short enraged Hard interval up to ~2 volleys can be in flight ≈ 20
+    // live bullets — 64 leaves comfortable margin (design 6.3).
     this.bossBullets = new BulletPool(this.sm.scene, {
-      cap: 32,
+      cap: 64,
       color: 0xf43f5e,
       radius: 0.22,
       length: 0.5,
@@ -80,9 +84,13 @@ export class Game {
 
     this.hud = new HUD(audio)
     this.screens = new Screens({
-      onStart: () => this.start(),
+      onStart: (difficulty) => this.start(difficulty),
       onRestart: () => this.restart(),
     })
+
+    // active difficulty tier (chosen on the start screen; in-memory only, applies to all stages)
+    this.difficulty = 'normal'
+    this.preset = PRESETS.normal
 
     this.state = 'MENU'
     this.phase = 'RUN'
@@ -122,7 +130,11 @@ export class Game {
   }
 
   // ── lifecycle ──
-  start() {
+  // The chosen difficulty applies to all 3 stages for the whole run (in-memory only). Every
+  // stage activation runs the Normal-baseline stage through applyDifficulty (design 6.3).
+  start(difficulty = 'normal') {
+    this.difficulty = difficulty
+    this.preset = PRESETS[difficulty] || PRESETS.normal
     // Audio unlock runs inside the Start-click stack FIRST so the user gesture is preserved
     // (AC6) — even if the soldier model isn't ready yet. playMusic() queues until decode
     // finishes on first run; starts from the top on restart (see AudioManager regimes).
@@ -137,28 +149,44 @@ export class Game {
     this._beginStart()
   }
 
+  // Resolve the active (tier-applied) config for stage i — single place the difficulty
+  // transform is applied (design Decision 1).
+  _activeStage(i) {
+    return applyDifficulty(this.stages[i], this.preset)
+  }
+
   _beginStart() {
     this.state = 'PLAYING'
-    this.config = this.stages[this.stageIndex]
+    this.stageIndex = 0
+    this.config = this._activeStage(this.stageIndex)
+    this.trackLength = this.config.boss.z + END_PAD
+    // rebuild entities with the tier-applied hp/bullets (the constructor's initial Track build
+    // only backed the menu) — Track.reset disposes + rebuilds from the passed config.
+    this.track.reset(this.config)
     this._resetStageState(this.config.startCount)
     this.screens.hideAll()
     this.hud.show(this.config.label)
     this.hud.update(this._hudState())
   }
 
+  // Restart returns to the start screen so the player re-picks the tier (design Decision 9).
   restart() {
     this.stageIndex = 0
-    this.config = this.stages[0]
-    this.dmgMult = 1 // full reset of permanent buffs (AC12)
+    this.difficulty = null
+    this.preset = null
+    this.config = this.stages[0] // base, pre-transform (re-resolved on the next start())
+    this.dmgMult = 1 // full reset of permanent buffs
     this.audio?.stopMusic() // ensure music restarts from the top via start() (AC4)
     this.track.reset(this.config)
-    this.start()
+    this.state = 'MENU'
+    this.hud.hide()
+    this.screens.showStart()
   }
 
   _advanceStage() {
     const carried = this.crowd.count
     this.stageIndex++
-    this.config = this.stages[this.stageIndex]
+    this.config = this._activeStage(this.stageIndex)
     this.trackLength = this.config.boss.z + END_PAD
     this.track.reset(this.config)
     // carry the army, floored to the new stage's baseline (Decision 5); keep dmgMult.
@@ -406,13 +434,15 @@ export class Game {
   }
 
   _resolveBossBullets(leaderX, shielded) {
-    const burst = this.track.boss.burst
+    // Each connecting fan bullet drains bulletDamage soldiers; a full fan of N landing = N ×
+    // bulletDamage (matches the verifier's volley model — design 6.3).
+    const bulletDamage = this.track.boss.bulletDamage
     this.bossBullets.forEachActive((i, x, y, z) => {
       if (z <= this.leaderZ + 0.4) {
         if (Math.abs(x - leaderX) < HIT_RADIUS) {
           if (!shielded) {
             const before = this.crowd.count
-            this.crowd.removeBurst(burst)
+            this.crowd.removeBurst(bulletDamage)
             const lost = before - this.crowd.count
             this.combo = 0
             this.audio?.play('hurt') // multi-bullet frames collapse to one hit via guard
@@ -485,7 +515,8 @@ export class Game {
     this.state = result
     this.audio?.stopMusic() // music stops on WIN/LOSE; the sting plays clean over silence
     this.audio?.play(result === 'WIN' ? 'win' : 'lose')
-    const stats = `Crowd ${this.crowd.count}  ·  Stage ${this.stageIndex + 1}`
+    const tier = this.preset?.label || 'NORMAL'
+    const stats = `Crowd ${this.crowd.count}  ·  Stage ${this.stageIndex + 1}  ·  ${tier}`
     if (result === 'WIN') this.screens.showWin(stats)
     else this.screens.showLose(stats)
   }

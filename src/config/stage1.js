@@ -1,42 +1,47 @@
-// ── Stage 1 — authored as data (design 6.10) ─────────────────────────────────
-// Track/Crowd/Boss/Enemy/Track read ONLY from this object; adding a stage is a new
-// file of the same shape + a one-line swap in main.js (AC11/AC15).
+// ── Stage 1 — Normal baseline (design 2026-06-12-difficulty-tiers) ───────────────
+// Track/Crowd/Boss/Enemy read ONLY from this object. This file is the NORMAL tier; HARD is
+// the runtime transform in src/config/difficulty.js (timeLimit ×0.85, runSpeed ×1.12, boss
+// hp ×1.3 / fireInterval ×0.85 / bulletSpeed ×1.15 / bullets +2, obstacle+enemy hp ×1.2,
+// marchSpeed ×1.15, reinforce ×0.8). Verified for BOTH tiers by scripts/verify-balance.mjs.
 //
-// Combat is ranged: army firepower = count · perSoldierDPS · dmgMult · (rapid?·)
-// hits the nearest ENGAGED target ahead within fireRange. Full-width blocks and
-// enemies are mandatory (must be shot down before contact); dodgeable blocks have a
-// sub-range you steer around (then they're never engaged → no fire, no loss).
+// Count-dependent BOTH-GREEN gates (design Decision 7): every pair is +N vs ×M, so the better
+// side FLIPS with your count (×M beats +N only past count = N/(M−1)) — you must track your
+// count, there is no red "bad" side. The verifier's clean picks max() (perfect count-tracker),
+// the worst path picks min() (deliberately under-grows).
 //
-// Best-path gate sim (always the higher side), start = 1:
-//   z26  ×3 vs +8  -> +8 => 9
-//   z58  +20 vs ×2 -> +20 => 29
-//   z96  ×2 vs +16 -> ×2 => 58
-//   z140 −18 vs +24-> +24 => 82
-//   z186 +30 vs −12-> +30 => 112
-//   z232 +22 vs +12-> +22 => 134
-// A clean run reaches the boss with ~134 soldiers; mandatory threats are tuned so a
-// clean run destroys each before contact (zero soldier loss). Worst-path picks the
-// lower side every gate and is wiped by z140 (−25 on 12 → 0). Verified by
-// scripts/verify-balance.mjs.
+// Best-path (always the higher side), start = 1:
+//   z24  +10 vs ×3  -> +10 => 11
+//   z62  ×2  vs +26 -> +26 => 37
+//   z104 +34 vs ×2  -> ×2  => 74
+//   z150 ×2  vs +60 -> ×2  => 148
+//   z200 +50 vs ×2  -> ×2  => 200 (cap)
+//   z250 ×2  vs +40 -> tie => 200
+// Clean reaches the boss at the 200 cap; every mandatory threat is tuned so a clean run
+// destroys it before contact (zero soldier loss) on BOTH tiers.
 //
-// Difficulty (rebalance 2026-06-12): boss hp 1080 + offense (burst 11 @ 1.3s) make the
-// fight last ~9s and lethal if you eat bullets — at the ~134-soldier entry it drains
-// 1 soldier per HP per hit. Power-ups are nerfed to an edge (dmgCap 1.3 × rapid 1.5), so
-// even a buffed capped army can't melt the boss faster than ~3s. A clean run still wins;
-// sloppy gate picks or eating boss bullets lose.
+// Worst-path (always the lower side), start = 1:
+//   z24  -> ×3=3   z62 -> ×2=6   z104 -> ×2=12
+// reaches the z118 full-width block (hp 40) with ~12 soldiers; ~11 DPS over the engagement
+// window can't out-shoot 40, so the leftover block drains the whole 12-soldier army -> WIPE.
+// (careless wipes even earlier, standing in the z44 dodgeable block.) Verified.
+//
+// Difficulty: tighter 48s clock (was 60). Boss = a FAN of 5 bullets/volley (4 soldiers each)
+// that ENRAGES under 33% HP (fires faster, +2 bullets); dodge the fan by steering off its band.
+// Power-ups are nerfed to an edge (dmgCap 1.3 × rapid 1.5 -> no buffed-cap melt) and POSITIONAL
+// (placed so grabbing one costs army or position).
 
 export default {
   id: 'stage-1',
   label: 'STAGE 1',
 
   // ── pacing / world ──
-  timeLimit: 60,
-  runSpeed: 16,
+  timeLimit: 48,
+  runSpeed: 18,
   roadHalf: 3.0,
   crowdCap: 200,
   startCount: 1,
   seed: 1337,
-  bossStandoff: 20, // big standoff so boss bullets have a real dodge window
+  bossStandoff: 20, // big standoff so the boss fan has a real dodge window
 
   // ── combat ──
   combat: {
@@ -44,9 +49,19 @@ export default {
     fireRange: 22, // how far ahead the army can engage a target
   },
 
-  boss: { z: 360, hp: 1080, fireInterval: 1.3, burst: 11, bulletSpeed: 23 },
+  // bullets = fan projectiles per volley; bulletDamage = soldiers lost per connecting bullet;
+  // enrage = under `below` HP fraction, fire interval ×fireIntervalMult and +bulletsAdd bullets.
+  boss: {
+    z: 380,
+    hp: 1500,
+    fireInterval: 1.3,
+    bullets: 5,
+    bulletDamage: 4,
+    bulletSpeed: 23,
+    enrage: { below: 0.33, fireIntervalMult: 0.7, bulletsAdd: 2 },
+  },
 
-  // ── power-up tuning (all four types) — nerfed so buffs are an edge, not an auto-win ──
+  // ── power-up tuning — nerfed so buffs are an edge, not an auto-win ──
   powerupTuning: {
     rapidMult: 1.5,
     rapidDuration: 5,
@@ -56,35 +71,39 @@ export default {
     dmgCap: 1.3,
   },
 
-  // gate pairs: ['add',n] +n | ['mul',n] ×n | ['sub',n] −n
+  // gate pairs: ['add',n] +n | ['mul',n] ×n — every pair is count-dependent (both green)
   gates: [
-    { z: 26, left: ['mul', 3], right: ['add', 8] },
-    { z: 58, left: ['add', 20], right: ['mul', 2] },
-    { z: 96, left: ['mul', 2], right: ['add', 16] },
-    { z: 140, left: ['sub', 25], right: ['add', 24] },
-    { z: 186, left: ['add', 30], right: ['sub', 20] },
-    { z: 232, left: ['add', 22], right: ['add', 12] },
+    { z: 24, left: ['add', 10], right: ['mul', 3] },
+    { z: 62, left: ['mul', 2], right: ['add', 26] },
+    { z: 104, left: ['add', 34], right: ['mul', 2] },
+    { z: 150, left: ['mul', 2], right: ['add', 60] },
+    { z: 200, left: ['add', 50], right: ['mul', 2] },
+    { z: 250, left: ['mul', 2], right: ['add', 40] },
   ],
 
-  // fullWidth => spans the road (mandatory, must shoot). Others are dodgeable.
+  // fullWidth => spans the road (mandatory, must shoot). Others are dodgeable. Mandatory
+  // threats are spaced so their engagement windows ([z−fireRange, z]) never overlap on Normal,
+  // and mandatory enemies sit AFTER the army caps so the full firepower clears them in the
+  // marching window on both tiers (zero clean drain).
   obstacles: [
     { z: 44, hp: 20, xRange: [-3.0, 0.3] }, // dodge right
-    { z: 118, hp: 50, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
+    { z: 118, hp: 40, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot (wipes the worst path)
     { z: 210, hp: 30, xRange: [-0.3, 3.0] }, // dodge left
-    { z: 256, hp: 70, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
+    { z: 250, hp: 100, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
   ],
 
   // marching enemy squads (full-lane, mandatory) — shoot down or lose soldiers
   enemies: [
-    { z: 170, hp: 55, xRange: [-3.0, 3.0], marchSpeed: 4 },
-    { z: 305, hp: 80, xRange: [-3.0, 3.0], marchSpeed: 5 },
+    { z: 290, hp: 90, xRange: [-3.0, 3.0], marchSpeed: 2.5 },
+    { z: 330, hp: 120, xRange: [-3.0, 3.0], marchSpeed: 2.5 },
   ],
 
-  // power-ups (former coin slots): rapid | reinforce | shield | damage — pure upside
+  // power-ups — POSITIONAL tradeoffs: each sits on the worse gate side or behind a dodgeable
+  // block, so grabbing it costs position/army (no new types — pure upside if you can reach it).
   powerups: [
-    { z: 70, x: -1.4, type: 'rapid' },
-    { z: 150, x: 1.6, type: 'reinforce' },
-    { z: 200, x: -1.8, type: 'shield' },
+    { z: 70, x: -1.4, type: 'rapid' }, // off the z62 ×2 (better) side
+    { z: 150, x: 1.6, type: 'reinforce' }, // pulls you onto the z150 +60 (worse) side
+    { z: 210, x: 1.8, type: 'shield' }, // tucked behind the z210 dodge block
     { z: 280, x: 0.6, type: 'damage' },
     { z: 320, x: -1.0, type: 'damage' },
   ],

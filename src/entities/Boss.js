@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { makeTextSprite, updateTextSprite } from '../util/text.js'
+import { bossVolley } from '../config/difficulty.js'
 
 // End-of-stage boss (design 6.6 / 2026-06-12-gltf-soldiers-crowd-boss §6.7). The army's
 // firepower drains the boss each frame; its only threat is telegraphed projectiles fired on
@@ -28,6 +29,18 @@ const _charred = new THREE.Color(0x140a0a)
 const WINDUP = 0.45 // seconds of telegraph before each shot
 const RECOIL_TIME = 0.18
 
+// Total angular spread of the bullet fan (radians). Geometry (design Decision 5): at the
+// ~20-unit standoff the outermost bullet lands ~20·tan(0.065) ≈ 1.30 < HIT_RADIUS ≈ 1.56, so a
+// stationary centred army eats the WHOLE volley — keeping the verifier's eat-all model faithful
+// — while the ~2.6-unit covered band still forces a real lateral dodge across the 6-unit road.
+const FAN_ANGLE = 0.13
+
+// Enrage telegraph hues (cosmetic): the boss flips eyes/core to a hotter glow under enrage.
+const _eyeCalm = 0xff2200
+const _eyeRage = 0xff8a1e
+const _coreCalm = 0xff4400
+const _coreRage = 0xffb347
+
 // Cosmetic boss-death hold (design 6.5). Game freezes into WIN_SEQUENCE for this long while
 // the multi-stage burst + heavy shake + collapse play, then advances / shows the win screen.
 export const BOSS_DEATH_TIME = 1.1
@@ -38,7 +51,12 @@ export class Boss {
     this.maxHp = config.boss.hp
     this.hp = config.boss.hp
     this.fireInterval = config.boss.fireInterval ?? 1.6
-    this.burst = config.boss.burst ?? 6
+    // bullets-per-volley (fan count) and soldiers-lost-per-connecting-bullet. Required in
+    // every stage config (design Decision 13); these ?? fallbacks are crash-safety only.
+    this.bullets = config.boss.bullets ?? 5
+    this.bulletDamage = config.boss.bulletDamage ?? 3
+    this.enrage = config.boss.enrage ?? { below: 0.33, fireIntervalMult: 0.7, bulletsAdd: 2 }
+    this._enraged = false
     this.bulletSpeed = config.boss.bulletSpeed ?? 20
     this._hpShown = -1
     this._fireTimer = 0
@@ -139,14 +157,18 @@ export class Boss {
     this.hp -= firepower * dt
     this._t += dt
 
+    // Active cadence + fan size from the SHARED volley model (enrage under ~33% HP fires more
+    // often with extra bullets) — single source with the verifier (design Decision 6).
+    const volley = bossVolley(this, this.hpFraction)
+    this._enraged = volley.enraged
     let fired = false
     if (this.hp > 0) {
       this._fireTimer += dt
       // wind-up charge over the last WINDUP seconds before the shot
-      this._charge = THREE.MathUtils.clamp(1 - (this.fireInterval - this._fireTimer) / WINDUP, 0, 1)
-      if (this._fireTimer >= this.fireInterval) {
-        this._fireTimer -= this.fireInterval
-        this._fire(armyX, armyZ, bossBullets)
+      this._charge = THREE.MathUtils.clamp(1 - (volley.interval - this._fireTimer) / WINDUP, 0, 1)
+      if (this._fireTimer >= volley.interval) {
+        this._fireTimer -= volley.interval
+        this._fire(armyX, armyZ, bossBullets, volley.bullets)
         fired = true
         this._charge = 0
         this._recoil = 1
@@ -168,10 +190,15 @@ export class Boss {
     }
     this.bodyMat.emissiveIntensity = dmg * 0.4 // ember glow through cracks
 
-    // wind-up cosmetics: eyes + core brighten, boss rears back; recoil kick after a shot
-    this.eyeMat.emissiveIntensity = 1.2 + this._charge * 2.2 + this._flash
-    this.coreMat.emissiveIntensity = this._charge * 3.2
-    this.core.scale.setScalar(0.5 + this._charge * 0.9)
+    // wind-up cosmetics: eyes + core brighten, boss rears back; recoil kick after a shot.
+    // Enrage (<33% HP) recolors the telegraph to a hotter hue + brighter glow (cosmetic only).
+    const rage = this._enraged ? 1 : 0
+    this.eyeMat.color.setHex(this._enraged ? _eyeRage : _eyeCalm)
+    this.eyeMat.emissive.setHex(this._enraged ? _eyeRage : _eyeCalm)
+    this.coreMat.emissive.setHex(this._enraged ? _coreRage : _coreCalm)
+    this.eyeMat.emissiveIntensity = 1.2 + this._charge * 2.2 + this._flash + rage * 1.4
+    this.coreMat.emissiveIntensity = this._charge * 3.2 + rage * 1.1
+    this.core.scale.setScalar((0.5 + this._charge * 0.9) * (1 + rage * 0.25))
     if (this._recoil > 0) this._recoil = Math.max(0, this._recoil - dt / RECOIL_TIME)
     const slump = stage === 2 ? 0.07 : 0
     this.group.rotation.x = slump - this._charge * 0.1 + this._recoil * 0.09
@@ -220,21 +247,31 @@ export class Boss {
     if (this._dying <= 0) this.group.visible = false
   }
 
-  _fire(armyX, armyZ, bossBullets) {
+  // Spawn `n` bullets in a horizontal FAN centred on the army x (design Decision 5). The fixed
+  // origin/trajectory base (ox/oy/oz, ty) is UNCHANGED so the boss-bullet path that HIT_RADIUS
+  // reasoning depends on is preserved (AC11). Each bullet rotates the horizontal component by an
+  // evenly-spaced yaw offset within FAN_ANGLE; horizontal magnitude + dy are preserved, so every
+  // bullet keeps |velocity| = bulletSpeed (speed-preserving) and shares the same life.
+  _fire(armyX, armyZ, bossBullets, n = 1) {
     if (!bossBullets) return
     this._flash = 0.18
     const ox = 0
     const oy = 1.9
     const oz = this.z - 1.4
-    const tx = armyX
     const ty = 0.6
-    const tz = armyZ
-    const dx = tx - ox
+    const dx = armyX - ox
     const dy = ty - oy
-    const dz = tz - oz
+    const dz = armyZ - oz
     const dist = Math.hypot(dx, dy, dz) || 1
     const s = this.bulletSpeed / dist
     const life = dist / this.bulletSpeed + 0.4
-    bossBullets.spawn(ox, oy, oz, dx * s, dy * s, dz * s, life)
+    const horiz = Math.hypot(dx, dz) || 1
+    const baseYaw = Math.atan2(dx, dz)
+    const count = Math.max(1, n | 0)
+    for (let i = 0; i < count; i++) {
+      const off = count > 1 ? (i / (count - 1) - 0.5) * FAN_ANGLE : 0
+      const yaw = baseYaw + off
+      bossBullets.spawn(ox, oy, oz, Math.sin(yaw) * horiz * s, dy * s, Math.cos(yaw) * horiz * s, life)
+    }
   }
 }
