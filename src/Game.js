@@ -164,7 +164,11 @@ export class Game {
         this.phase = 'BOSS'
       }
     }
-    const leaderX = this.input.x
+    // Negate input→world-X: the chase camera faces +Z and mirrors world X on
+    // screen (see SceneManager), so without this, right input would drift the
+    // crowd left. One negation here keeps every leaderX consumer + camera-follow
+    // consistent; clamping stays symmetric in Input.x space.
+    const leaderX = -this.input.x
     this.leaderPos.set(leaderX, 0, this.leaderZ)
     this.timeRemaining -= dt
 
