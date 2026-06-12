@@ -1,5 +1,43 @@
 # Credits & Asset Provenance
 
+## Models (`src/assets/models/*.glb`)
+
+The soldier model is **self-authored** and dedicated to the **public domain under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)**. No third-party meshes,
+rigs, or textures are used — the humanoid is assembled from primitive boxes in code and
+exported to glTF. You owe no attribution to use, modify, or redistribute it.
+
+### Files
+
+- `soldier.glb` — a low-poly humanoid soldier (head / torso / arms-with-gun / legs), reused
+  and recolored for the green follower army, the orange leader, and the red enemy squads. It
+  is merged into one shared geometry at load and animated by a per-instance GPU limb swing,
+  so each crowd renders as a single `InstancedMesh` (one draw call). It carries **no
+  textures** (solid material colours only).
+
+### Reproducing the asset
+
+The `.glb` is committed to the repo, so the normal build/dev/CI flow never regenerates it.
+To regenerate it identically (requires only the project's `three` dependency):
+
+```bash
+node scripts/gen-models.mjs
+```
+
+`scripts/gen-models.mjs` is the authoritative, reproducible source: it builds the humanoid
+via `buildSoldierParts()` in `src/util/soldier.js` (the single geometry source shared with
+the runtime fallback), strips UVs, and exports a binary GLB via three's `GLTFExporter`. It
+is a **dev-only** tool — never invoked by `npm run build`, `npm run verify`, or CI.
+
+### Swapping in another model
+
+To use a different soldier (e.g. a real CC0 model from [Kenney](https://kenney.nl/assets),
+[Quaternius](https://quaternius.com), or [OpenGameArt](https://opengameart.org)), drop a
+`soldier.glb` into `src/assets/models/` — `models.js` discovers it by name via Vite's glob.
+The loader tags limbs by mesh name (`legL` / `legR` / `armL` / `armR`; everything else is
+the static "core"), so a replacement animates if it follows that naming. If you swap it,
+document the new source + license here and confirm it is CC0 / royalty-free.
+
 ## Audio (`src/assets/audio/*.mp3`)
 
 All audio in Swarm Run is **self-authored** and dedicated to the **public domain under

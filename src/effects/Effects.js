@@ -74,6 +74,15 @@ export class Effects {
   powerupGrab(x, y, z, color) {
     this.particles.burst(x, y, z, { count: 16, color, speed: 6, up: 1.0, size: 0.17, life: 0.5 })
   }
+  // Combat feedback (AC4). Muzzle flash: a few bright, short-lived sparks at the firing front
+  // (≤1 per _fire volley → negligible concurrent count). Soldier poof: an olive puff selling
+  // soldiers dropping, fired alongside the red lossShards on every soldier-loss event.
+  muzzleFlash(x, y, z) {
+    this.particles.burst(x, y, z, { count: 3, color: 0xfff1a8, speed: 3, up: 0.25, size: 0.13, life: 0.07, sizeJitter: 0.4 })
+  }
+  soldierPoof(x, y, z) {
+    this.particles.burst(x, y, z, { count: 10, color: 0x4d7c2a, speed: 5, up: 0.6, size: 0.16, life: 0.42 })
+  }
   // Boss death is a multi-stage burst; Game fires waves 0/1/2 over the WIN_SEQUENCE hold.
   bossDeathWave(x, y, z, stage) {
     const tunings = [

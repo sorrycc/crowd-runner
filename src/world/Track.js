@@ -20,9 +20,11 @@ function disposeMaterial(material) {
 }
 
 export class Track {
-  constructor(scene, config) {
+  // `soldierGeo` is the shared soldier geometry (from models.js) handed to enemy squads.
+  constructor(scene, config, soldierGeo) {
     this.scene = scene
     this.config = config
+    this.soldierGeo = soldierGeo
     this.build()
   }
 
@@ -30,19 +32,26 @@ export class Track {
     const cfg = this.config
     this.gates = cfg.gates.map((s) => new Gate(this.scene, s, cfg.roadHalf))
     this.obstacles = (cfg.obstacles || []).map((s) => new Obstacle(this.scene, s))
-    this.enemies = (cfg.enemies || []).map((s) => new Enemy(this.scene, s))
+    this.enemies = (cfg.enemies || []).map((s) => new Enemy(this.scene, s, this.soldierGeo))
     this.powerups = (cfg.powerups || []).map((s) => new Powerup(this.scene, s))
     this.boss = new Boss(this.scene, cfg)
+  }
+
+  // Never dispose the shared soldier geometry (page-lifetime singleton from models.js,
+  // referenced by Crowd + every enemy squad) — it is marked userData.shared. The boss group's
+  // own geometry is not flagged, so it is still freed on rebuild.
+  _disposeGeometry(geometry) {
+    if (geometry && !geometry.userData?.shared) geometry.dispose?.()
   }
 
   _removeObject(obj) {
     this.scene.remove(obj)
     obj.traverse?.((o) => {
-      o.geometry?.dispose?.()
+      this._disposeGeometry(o.geometry)
       disposeMaterial(o.material)
     })
     if (!obj.traverse) {
-      obj.geometry?.dispose?.()
+      this._disposeGeometry(obj.geometry)
       disposeMaterial(obj.material)
     }
   }

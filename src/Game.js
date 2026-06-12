@@ -8,6 +8,8 @@ import { Crowd, FORMATION_HALF_WIDTH } from './entities/Crowd.js'
 import { BulletPool } from './entities/Bullets.js'
 import { Effects } from './effects/Effects.js'
 import { BOSS_DEATH_TIME } from './entities/Boss.js'
+import { soldierModelReady } from './util/models.js'
+import { tickSoldiers } from './util/soldier.js'
 import { HUD } from './ui/HUD.js'
 import { Screens } from './ui/Screens.js'
 
@@ -49,9 +51,14 @@ export class Game {
     new Road(this.sm.scene, this.config, worldLen)
     new Environment(this.sm.scene, this.config, worldLen)
 
-    // dynamic entities
-    this.crowd = new Crowd(this.sm.scene, this.config)
-    this.track = new Track(this.sm.scene, this.config)
+    // dynamic entities — deferred until the soldier model resolves (AC6). First paint is the
+    // menu over the static world (road/env/sky), none of which need the model; Crowd + Track
+    // (which build the soldier InstancedMeshes + enemy squads) come online a few tens of ms
+    // later from the bundled local .glb. start() guards against a Start click before then.
+    this.crowd = null
+    this.track = null
+    this._ready = false
+    this._pendingStart = false
 
     // bullet pools
     this.playerBullets = new BulletPool(this.sm.scene, {
@@ -98,6 +105,17 @@ export class Game {
     this._bulletTick = 0
     this._shootSfxAcc = 0
 
+    // Build Crowd + Track once the shared soldier geometry is ready, then drain a queued Start.
+    soldierModelReady.then((soldierGeo) => {
+      this.crowd = new Crowd(this.sm.scene, this.config, soldierGeo)
+      this.track = new Track(this.sm.scene, this.config, soldierGeo)
+      this._ready = true
+      if (this._pendingStart) {
+        this._pendingStart = false
+        this._beginStart()
+      }
+    })
+
     this._last = performance.now()
     this._loop = this._loop.bind(this)
     requestAnimationFrame(this._loop)
@@ -105,17 +123,27 @@ export class Game {
 
   // ── lifecycle ──
   start() {
+    // Audio unlock runs inside the Start-click stack FIRST so the user gesture is preserved
+    // (AC6) — even if the soldier model isn't ready yet. playMusic() queues until decode
+    // finishes on first run; starts from the top on restart (see AudioManager regimes).
+    this.audio?.unlock()
+    this.audio?.playMusic()
+    // If the model is still loading, queue the start; the soldierModelReady.then drains it
+    // the instant Crowd/Track exist, so a click during a slow/cold load never crashes.
+    if (!this._ready) {
+      this._pendingStart = true
+      return
+    }
+    this._beginStart()
+  }
+
+  _beginStart() {
     this.state = 'PLAYING'
     this.config = this.stages[this.stageIndex]
     this._resetStageState(this.config.startCount)
     this.screens.hideAll()
     this.hud.show(this.config.label)
     this.hud.update(this._hudState())
-    // Audio unlock runs inside the Start-click stack so the user gesture is preserved
-    // (AC6). playMusic() queues until decode finishes on first run; starts from the top
-    // on restart (see AudioManager regimes).
-    this.audio?.unlock()
-    this.audio?.playMusic()
   }
 
   restart() {
@@ -229,7 +257,10 @@ export class Game {
     } else {
       // BOSS phase
       const bossFired = this.track.boss.update(dt, F, leaderX, this.leaderZ, this.bossBullets)
-      if (bossFired) this.audio?.play('boss-shot', { volume: 0.6 })
+      if (bossFired) {
+        this.audio?.play('boss-shot', { volume: 0.6 })
+        this.effects.muzzleFlash(0, 1.95, cfg.boss.z - 1.7) // flash at the boss cannon muzzle
+      }
       this._fire(dt, 0, cfg.boss.z - 1.4)
       this._resolveBossBullets(leaderX, shielded)
     }
@@ -274,9 +305,11 @@ export class Game {
   }
 
   _fire(dt, aimX, aimZ) {
+    let volleyed = false
     this._fireAcc += dt
     while (this._fireAcc >= FIRE_CADENCE) {
       this._fireAcc -= FIRE_CADENCE
+      volleyed = true
       const n = Math.max(1, Math.min(6, Math.ceil(this.crowd.count / 12)))
       for (let k = 0; k < n; k++) {
         const m = this.crowd.frontPosition(this._bulletTick++)
@@ -287,6 +320,12 @@ export class Game {
         const s = PLAYER_BULLET_SPEED / dist
         this.playerBullets.spawn(m.x, m.y, m.z, dx * s, dy * s, dz * s, dist / PLAYER_BULLET_SPEED + 0.12)
       }
+    }
+    // Muzzle flash at the firing front — at most once per call (not per volley tick), so it
+    // never multi-bursts on frame catch-up and stays inside the particle budget (AC4).
+    if (volleyed && this.crowd.count > 0) {
+      const f = this.crowd.frontPosition(0)
+      this.effects.muzzleFlash(f.x, f.y + 0.1, f.z)
     }
     // Shoot SFX on its own slower cadence (the 0.05s volley rate would machine-gun audio).
     this._shootSfxAcc += dt
@@ -329,6 +368,7 @@ export class Game {
             this.audio?.play('hurt')
             this.effects.number(-drained, leaderX, 1.8, this.leaderZ)
             this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+            this.effects.soldierPoof(leaderX, 0.6, this.leaderZ) // soldiers fall on contact (AC4)
             this.sm.shake(0.12)
           }
           if (o.broken) this.effects.blockBreak((o.xRange[0] + o.xRange[1]) / 2, 0.6, o.z)
@@ -345,6 +385,7 @@ export class Game {
             this.audio?.play('hurt')
             this.effects.number(-drained, leaderX, 1.8, this.leaderZ)
             this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+            this.effects.soldierPoof(leaderX, 0.6, this.leaderZ) // soldiers fall on contact (AC4)
             this.sm.shake(0.12)
           }
           if (e.dead) this.effects.enemyDeath((e.xRange[0] + e.xRange[1]) / 2, 0.8, e.z)
@@ -378,6 +419,7 @@ export class Game {
             if (lost > 0) {
               this.effects.number(-lost, leaderX, 1.8, this.leaderZ)
               this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+              this.effects.soldierPoof(leaderX, 0.6, this.leaderZ) // soldiers fall on the hit (AC4)
               this.sm.shake(0.12) // light shake on soldier loss
             }
           }
@@ -465,6 +507,7 @@ export class Game {
   _loop(now) {
     const dt = Math.min((now - this._last) / 1000, MAX_DT)
     this._last = now
+    tickSoldiers(dt) // advance the shared soldier-animation clock (every soldier material reads it)
     this._update(dt)
     this.effects.update(dt) // animate particles/popups every frame (incl. WIN_SEQUENCE/end)
     if (this.state === 'WIN_SEQUENCE') this._tickWinSequence(dt)

@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { makeTextSprite, updateTextSprite } from '../util/text.js'
-import { makeSoldierGeometry } from '../util/soldier.js'
+import { makeSoldierMaterial, SOLDIER_ANIM } from '../util/soldier.js'
+
+const LEADER_SCALE = 1.25 // baked-at-1.25 look is gone; applied via leader.scale now
 
 // The army (design 6.3). `count` is the integer source of truth in [0, cap]. The
 // leader is a separate orange soldier; followers (= count-1) are one InstancedMesh
@@ -22,28 +24,26 @@ const POP_DECAY = 9 // per-second multiplicative decay of the reinforce scale-po
 export const FORMATION_HALF_WIDTH = ((COLS - 1) / 2) * SPACING
 
 export class Crowd {
-  constructor(scene, config) {
+  // `soldierGeo` is the ONE shared, merged humanoid geometry (from models.js); the leader,
+  // the followers, and every enemy squad reference the same instance — one draw call each.
+  // The march/run motion is a GPU limb swing in the soldier material (per-instance phase via
+  // gl_InstanceID); no per-frame CPU animation beyond the existing position lerp.
+  constructor(scene, config, soldierGeo) {
     this.cap = config.crowdCap
     this.limit = config.roadHalf - MARGIN
     this.count = 0
     this._removalDebt = 0
     this._plateText = -1
-    this._bob = 0
     this._pop = 0 // transient scale-pop on gain (design 6.4)
 
-    const followerGeo = makeSoldierGeometry({ scale: 1 })
-
-    // leader (separate, larger, orange)
-    this.leader = new THREE.Mesh(
-      makeSoldierGeometry({ scale: 1.25 }),
-      new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.6 })
-    )
+    // leader (separate single mesh, larger, orange, punchier run animation → distinct)
+    this.leader = new THREE.Mesh(soldierGeo, makeSoldierMaterial(0xf97316, SOLDIER_ANIM.leader))
     scene.add(this.leader)
 
-    // followers (instanced, green)
+    // followers (instanced, green) — share the same geometry as the leader/enemies
     this.mesh = new THREE.InstancedMesh(
-      followerGeo,
-      new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.6 }),
+      soldierGeo,
+      makeSoldierMaterial(0x22c55e, SOLDIER_ANIM.follower),
       this.cap
     )
     this.mesh.count = 0
@@ -98,7 +98,6 @@ export class Crowd {
   reset(count) {
     this.setCount(count)
     this.init.fill(false)
-    this._bob = 0
     this._pop = 0
     this._plateText = -1
   }
@@ -117,18 +116,19 @@ export class Crowd {
     this._leaderX = leaderX
     this._leaderZ = leaderZ
 
-    // scale-pop: decay toward 0 (baseline scale = 1; the bigger leader look comes from its
-    // geometry baked at 1.25, so do NOT multiply by 1.25 here)
+    // scale-pop: decay toward 0 (baseline follower scale = 1). The bigger leader look now
+    // comes from leader.scale = LEADER_SCALE (geometry is shared/unscaled), so the leader
+    // composes the pop as LEADER_SCALE * popScale.
     if (this._pop > 0) {
       this._pop *= Math.exp(-POP_DECAY * dt)
       if (this._pop < 0.001) this._pop = 0
     }
     const popScale = 1 + this._pop
 
-    // leader (with a little run bob)
-    this._bob += dt
-    this.leader.position.set(leaderX, Math.sin(this._bob * 12) * 0.05, leaderZ)
-    this.leader.scale.setScalar(popScale)
+    // leader: run motion is the GPU limb swing in its (punchier) soldier material, so no
+    // CPU bob here — just position + the composed pop scale.
+    this.leader.position.set(leaderX, 0, leaderZ)
+    this.leader.scale.setScalar(LEADER_SCALE * popScale)
     this.leader.visible = this.count > 0
 
     const followers = Math.max(0, this.count - 1)

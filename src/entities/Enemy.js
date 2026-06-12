@@ -1,20 +1,22 @@
 import * as THREE from 'three'
 import { makeTextSprite, updateTextSprite } from '../util/text.js'
-import { makeSoldierGeometry } from '../util/soldier.js'
+import { makeSoldierMaterial, SOLDIER_ANIM } from '../util/soldier.js'
 
 // A marching enemy squad (design 6.5). Rows of red soldiers (one InstancedMesh, one
 // draw call) with `hp`, an `xRange`, and a fixed deterministic `marchSpeed` toward
 // the player (−Z). Shot down like a block while engaged; if it reaches the army
 // (z ≤ leaderZ) alive it drains leftover soldiers on contact. No return fire. The
 // visible soldier count shrinks with remaining HP so it reads as taking casualties.
-// Geometry is per-instance (not a shared singleton) so Track.dispose() on stage
-// rebuild can safely dispose it.
+// Geometry is the SHARED soldier singleton (from models.js) — march/bob is the GPU limb
+// swing in the material, and Track.dispose() must NOT free it (it is marked userData.shared).
 
 const _white = new THREE.Color(0xffffff)
 const DEATH_TIME = 0.28 // cosmetic death flash + scale-pop linger before hide (design 6.6)
+const HIT_FLASH_TIME = 0.13 // squad flashes white + recoils briefly while under fire (AC4)
+const ENEMY_SCALE = 0.95 // enemies are slightly smaller; applied via the instance transform
 
 export class Enemy {
-  constructor(scene, spec) {
+  constructor(scene, spec, soldierGeo) {
     this.z = spec.z
     this.hp = spec.hp
     this.maxHp = spec.hp
@@ -23,7 +25,7 @@ export class Enemy {
     this.dead = false
     this._dying = 0 // > 0 only on a real kill (the silent slip-past leaves this 0)
     this._hpShown = -1
-    this._bob = 0
+    this._hitFlash = 0 // > 0 while reacting to incoming fire (AC4)
 
     const [x0, x1] = spec.xRange
     const width = Math.max(0.5, x1 - x0)
@@ -36,8 +38,8 @@ export class Enemy {
     this.group.position.set(0, 0, spec.z)
 
     this.mesh = new THREE.InstancedMesh(
-      makeSoldierGeometry({ scale: 0.95 }),
-      new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.6 }),
+      soldierGeo,
+      makeSoldierMaterial(0xdc2626, SOLDIER_ANIM.enemy),
       this.maxVisible
     )
     this._baseColor = this.mesh.material.color.clone()
@@ -65,7 +67,7 @@ export class Enemy {
         const x = this._x0 + (c + 0.5) * this.spacing
         const z = r * 0.42 // rows extend back (+local z), front faces the player
         this._dummy.position.set(i < visible ? x : 0, 0, z)
-        this._dummy.scale.setScalar(i < visible ? 1 : 0)
+        this._dummy.scale.setScalar(i < visible ? ENEMY_SCALE : 0)
         this._dummy.updateMatrix()
         this.mesh.setMatrixAt(i, this._dummy.matrix)
       }
@@ -90,11 +92,15 @@ export class Enemy {
       if (this._dying <= 0) this.group.visible = false
       return
     }
-    // alive
-    this._bob += dt
+    // alive: march forward; the per-soldier bob + limb swing is the GPU animation in the
+    // material, so the group itself no longer bobs.
     if (this.marchSpeed) this.z -= this.marchSpeed * dt
-    this.group.position.z = this.z
-    this.group.position.y = Math.abs(Math.sin(this._bob * 8)) * 0.04
+    // hit reaction (AC4): flash white + recoil while under fire. Continuous focus fire keeps
+    // _hitFlash topped up, so the squad glows the whole time it's being shot, then resets.
+    const k = this._hitFlash > 0 ? this._hitFlash / HIT_FLASH_TIME : 0
+    this.mesh.material.color.copy(this._baseColor).lerp(_white, 0.55 * k)
+    this.group.position.z = this.z + 0.05 * k
+    if (this._hitFlash > 0) this._hitFlash = Math.max(0, this._hitFlash - dt)
   }
 
   _refresh() {
@@ -111,6 +117,7 @@ export class Enemy {
   damage(amount) {
     if (this.dead) return
     this.hp -= amount
+    if (amount > 0) this._hitFlash = HIT_FLASH_TIME // visible hit reaction (AC4)
     if (this.hp <= 0) {
       this.hp = 0
       this._die()

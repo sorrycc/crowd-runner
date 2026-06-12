@@ -1,12 +1,18 @@
 # Swarm Run
 
-A Count Masters–style hypercasual **crowd shooter** built with **Three.js + Vite**,
-using only simple primitives for the visuals (no external 3D/texture assets), plus a
-small set of bundled **CC0 audio** clips for sound effects and looping music. Auto-run
-down a 3D road, steer through `+N` / `×N` / `−N` gate pairs to grow a squad of gun-toting
-soldiers who **auto-fire** at everything ahead — barricades, marching enemy squads, and
-two bosses. More soldiers means more firepower. Clear both stages before the timer runs
-out.
+A Count Masters–style hypercasual **crowd shooter** built with **Three.js + Vite**. The
+visuals are mostly simple primitives, plus a bundled, **self-authored CC0 humanoid GLTF**
+model for the soldiers (the leader, the follower army, and the enemy squads) and a small
+set of bundled **CC0 audio** clips for sound effects and looping music. Auto-run down a 3D
+road, steer through `+N` / `×N` / `−N` gate pairs to grow a squad of gun-toting soldiers
+who **auto-fire** at everything ahead — barricades, marching enemy squads, and two bosses.
+More soldiers means more firepower. Clear both stages before the timer runs out.
+
+> The original "only simple primitives, no external 3D/texture assets" promise is
+> intentionally amended: bundled, permissively-licensed (CC0) model assets are now allowed,
+> recorded in `CREDITS.md` like the audio. The army still renders as **one `InstancedMesh`**
+> per group (one draw call); its marching/running motion is a GPU vertex animation, not
+> per-soldier skinning, so the performance model is unchanged.
 
 ## Run
 
@@ -63,7 +69,15 @@ npm run verify
 - `src/entities/` — `Crowd` (soldier InstancedMesh + count math), `Bullets` (pooled
   projectiles, player + boss), `Gate`, `Obstacle` (destructible block), `Enemy`
   (marching squad), `Powerup`, `Boss` (firepower drain + telegraphed return fire).
-- `src/util/soldier.js` — merged body+gun+helmet geometry (one draw call per army/enemy).
+- `src/util/soldier.js` — the humanoid soldier model + its one-draw-call vertex-animation
+  material: merges the loaded GLTF into one shared geometry (baked per-vertex limb ids) and a
+  `MeshStandardMaterial` whose `onBeforeCompile` swings the limbs per-instance (phase from
+  `gl_InstanceID`). Also `buildSoldierParts()` — the single geometry source shared by the
+  model generator and the load-error fallback.
+- `src/util/models.js` — async `GLTFLoader` preload of `src/assets/models/soldier.glb`
+  (bundled via Vite); resolves the shared soldier geometry without blocking first paint.
+- `scripts/gen-models.mjs` — **dev-only** generator that authors `soldier.glb` from
+  `buildSoldierParts()` (never run by build/CI; see `CREDITS.md`).
 - `src/ui/` — `HUD` (count, combo, timer, stage, top bar, active-buff chips, mute toggle)
   and `Screens`.
 
@@ -106,5 +120,7 @@ don't have overlapping engagement windows (so focus-fire clears each before cont
 stage 2's first growth gate precedes any mandatory threat (so the carried-over floor army
 can grow before it can be wiped).
 
-Design docs: `docs/designs/2026-06-12-soldiers-shooter-rework.md` and
-`docs/designs/2026-06-12-audio-sfx-music-mute.md`.
+Design docs: `docs/designs/2026-06-12-soldiers-shooter-rework.md`,
+`docs/designs/2026-06-12-audio-sfx-music-mute.md`, and
+`docs/designs/2026-06-12-gltf-soldiers-crowd-boss.md` (the GLTF soldiers / animated crowd /
+menacing boss rework).
