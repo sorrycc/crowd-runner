@@ -256,11 +256,40 @@ export function generateStage(index, seed, preset) {
   const hpPerArmy = DPS * ft
   const bulletDamage = Math.max(1, Math.round((OFFENSE * cleanEnd * fireInterval) / (ft * bullets)))
 
+  // ── seeded boss-skill pool (2026-06-12-boss-seeded-skills) ──
+  // Cumulative family unlock by depth (Decision 1): index 0 = bullet-patterns only (parity with the
+  // old single fan); slam/wall/arc enter ~level 1, ring/adds ~level 2, shield ~level 3 (full set).
+  const skills = [{ type: 'fan', weight: 3 }]
+  if (level >= 1) skills.push({ type: 'wall', weight: 2 }, { type: 'arc', weight: 2 }, { type: 'slam', weight: 2 })
+  if (level >= 2) skills.push({ type: 'ring', weight: 2 }, { type: 'adds', weight: 2 })
+  if (level >= 3) skills.push({ type: 'shield', weight: 1 })
+
+  // Per-skill tuning, baked off `level` + `cleanEnd` (Decision 12: Hard-offset-scaled like every
+  // other threat). addHp sizes one same-Z wave so a clean army (≈cleanEnd) clears it in ~clearWindow
+  // seconds (≪ the 18/addMarch ≈ 6s march-to-contact deadline) → zero clean drain (AC8/AC11); an
+  // under-strength army can't clear and eats contact drain.
+  const addCount = Math.min(3, 1 + Math.floor(level / 3))
+  const clearWindow = 0.8 // total DPS-theft seconds per summon wave (verifier-tuned)
+  const skillTuning = {
+    addCount,
+    addHp: Math.max(1, Math.round((cleanEnd * DPS * clearWindow) / addCount)),
+    addMarch: 3.0,
+    clearWindow,
+    slamKill: Math.max(1, Math.round(bulletDamage * 4)),
+    slamHalfW: 1.1, // < limit (roadHalf-MARGIN ≈ 2.55): aimed + dodgeable (Decision 5)
+    slamTelegraph: 0.6,
+    shieldMult: 0.5, // incoming dmg ×0.5 = pure time tax (verifier-tuned)
+    shieldDuration: 1.4,
+  }
+
   const config = {
     id: `stage-${index + 1}`,
     label: index < 5 ? `STAGE ${index + 1}` : `DEPTH ${index + 1}`,
 
-    timeLimit: (RUN_END / runSpeed) * 1.35 + ft + 8, // run (sandstorm buffer) + fight + margin
+    // run (sandstorm buffer) + fight + margin. The fight now carries skill taxes (adds freeze boss
+    // DPS for clearWindow per summon; shield = a ×0.4 time tax), so the fight budget grows from `ft`
+    // to ~ft·1.8 + a fixed pad (2026-06-12-boss-seeded-skills §6.7, verifier-tuned).
+    timeLimit: (RUN_END / runSpeed) * 1.35 + ft * 1.8 + 12,
     runSpeed,
     roadHalf: ROAD_HALF,
     crowdCap: MAX_COUNT, // Crowd reads this for its sanity clamp (stays config-driven)
@@ -283,6 +312,10 @@ export function generateStage(index, seed, preset) {
       finale,
       frenzy: ev.frenzy,
       crowdCap: MAX_COUNT,
+      // seeded skill system — `seed` is the ONE field both Boss.js + the verifier key mulberry32 off
+      seed: (seed >>> 0) ^ (index * 2654435761),
+      skills,
+      skillTuning,
     },
 
     powerupTuning: { ...POWERUP_TUNING },

@@ -76,11 +76,12 @@ export class Game {
       radius: 0.06,
       length: 0.6,
     })
-    // Cap sized for the fan: worst case ≈ largest base bullets (~6) + Hard(+2) + enrage(+2) = ~10
-    // per volley, and at the short enraged Hard interval up to ~2 volleys can be in flight ≈ 20
-    // live bullets — 64 leaves comfortable margin (design 6.3).
+    // Cap sized for the seeded skill patterns (2026-06-12-boss-seeded-skills Decision 9): a cast
+    // spawns ≤ PATTERN_MAX=16 orbs (harmful core + short-life cosmetics); at the enraged floor
+    // MIN_FIRE_INTERVAL=0.45s with ~1.2s orb life, ~3 casts can be in flight ≈ 48 live orbs — 128
+    // gives ~2.7× margin so no orb is ever dropped (a drop would desync game vs. verifier drain).
     this.bossBullets = new BulletPool(this.sm.scene, {
-      cap: 64,
+      cap: 128,
       color: 0xe52521, // NES mario-red
       radius: 0.22,
       length: 0.5,
@@ -242,6 +243,7 @@ export class Game {
 
     this.playerBullets.clear()
     this.bossBullets.clear()
+    this.track.clearBossAdds?.() // drop any boss-phase adds (a restart mid-fight starts clean)
     this.effects.clear() // hard-cut in-flight popups/particles (shake resets on the snap below)
 
     this.input.reset()
@@ -390,15 +392,43 @@ export class Game {
       }
       this._resolveCrossings(leaderX, shielded)
     } else {
-      // BOSS phase — pass the active frenzy multiplier through the shared volley model
+      // BOSS phase — seeded skill system (2026-06-12-boss-seeded-skills §6.4).
       const frenzyMult = this.frenzyLeft > 0 ? EVENT_FX.FRENZY_FIRE_MULT : 1
-      const bossFired = this.track.boss.update(dt, F, leaderX, this.leaderZ, this.bossBullets, frenzyMult)
-      if (bossFired) {
-        this.audio?.play('boss-shot', { volume: 0.6 })
-        this.effects.muzzleFlash(0, 1.95, cfg.boss.z - 1.7) // flash at the boss cannon muzzle
+      // Summoned adds march + retarget the army's fire (DPS theft): the boss takes fire only when no
+      // add is the nearest engaged target — natural, since adds spawn between the boss and the army.
+      for (const a of this.track.bossAdds) a.update(dt, leaderX)
+      const add = this._acquireBossAdd(cfg.combat.fireRange)
+      const bossF = add ? 0 : F
+      if (add) {
+        add.damage(F * dt)
+        const ax = (add.xRange[0] + add.xRange[1]) / 2
+        this._fire(dt, ax, add.z)
+        if (add.dead) {
+          this.audio?.play('enemy-down')
+          this.effects.enemyDeath(ax, 0.8, add.z)
+        }
+      } else {
+        this._fire(dt, 0, cfg.boss.z - 1.4)
       }
-      this._fire(dt, 0, cfg.boss.z - 1.4)
+      const events = this.track.boss.update(dt, bossF, leaderX, this.leaderZ, this.bossBullets, frenzyMult)
+      for (const ev of events) {
+        if (ev.kind === 'bullets') {
+          this.audio?.play('boss-shot', { volume: 0.6 })
+          this.effects.muzzleFlash(0, 1.95, cfg.boss.z - 1.7) // flash at the boss cannon muzzle
+        } else if (ev.kind === 'adds') {
+          this.track.spawnBossAdds(ev.count, ev.hp, ev.march, cfg.boss.z, cfg.roadHalf)
+          this.hud.flashBanner('ADDS!')
+        } else if (ev.kind === 'slam') {
+          this._resolveSlam(ev, leaderX, shielded) // detonate → drain if leader still in band
+        } else if (ev.kind === 'slam-begin') {
+          this.audio?.play('hurt', { volume: 0.3 })
+        } else if (ev.kind === 'shield') {
+          this.audio?.play('powerup', { volume: 0.4 })
+          this.hud.flashBanner('BOSS SHIELD')
+        }
+      }
       this._resolveBossBullets(leaderX, shielded)
+      this._resolveBossAddContact(leaderX, shielded)
     }
 
     // 4) advance projectiles + crowd
@@ -568,6 +598,59 @@ export class Game {
         this.bossBullets.deactivate(i) // hit, absorbed, or passed
       }
     })
+  }
+
+  // Nearest live boss-phase add ahead within fireRange AND nearer than the boss — the SAME predicate
+  // the verifier's nearestAdd applies, so the boss-freeze condition is byte-identical (design §6.4).
+  _acquireBossAdd(fireRange) {
+    let best = null
+    let bestZ = Infinity
+    const far = this.leaderZ + fireRange
+    const bossZ = this.config.boss.z
+    for (const a of this.track.bossAdds) {
+      if (!a.dead && a.hp > 0 && a.z > this.leaderZ && a.z <= far && a.z < bossZ && a.z < bestZ) {
+        best = a
+        bestZ = a.z
+      }
+    }
+    return best
+  }
+
+  // Telegraphed slam detonate: a fixed crowd-burst if the leader CENTRE is still inside the aimed
+  // X-band (binary test — slamKill is a flat count, mirrorable in the verifier). Player-Shield negates.
+  _resolveSlam(ev, leaderX, shielded) {
+    if (shielded) return
+    if (Math.abs(leaderX - ev.xc) < ev.halfW) {
+      const before = this.crowd.count
+      this.crowd.removeBurst(ev.slamKill)
+      const lost = before - this.crowd.count
+      this.combo = 0
+      this.audio?.play('hurt')
+      if (lost > 0) {
+        this.effects.number(-lost, leaderX, 1.8, this.leaderZ)
+        this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+        this.effects.soldierPoof(leaderX, 0.6, this.leaderZ)
+        this.sm.shake(0.2)
+      }
+    }
+  }
+
+  // Uncleared full-width adds drain on contact when they reach the army (z ≤ leaderZ). Reuses the
+  // Enemy.contact math (min(count, ceil(hp))); clean clears them by fire first → zero drain (AC11).
+  _resolveBossAddContact(leaderX, shielded) {
+    for (const e of this.track.bossAdds) {
+      if (!e.dead && e.hp > 0 && e.z <= this.leaderZ) {
+        const drained = e.contact(this.crowd, shielded)
+        if (drained > 0) {
+          this.combo = 0
+          this.audio?.play('hurt')
+          this.effects.number(-drained, leaderX, 1.8, this.leaderZ)
+          this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+          this.effects.soldierPoof(leaderX, 0.6, this.leaderZ)
+          this.sm.shake(0.15)
+        }
+      }
+    }
   }
 
   _applyPowerup(type) {

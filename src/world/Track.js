@@ -4,6 +4,10 @@ import { Enemy } from '../entities/Enemy.js'
 import { Powerup } from '../entities/Powerup.js'
 import { Boss } from '../entities/Boss.js'
 
+// Tiny deterministic Z-stagger for a summon wave — gameplay-negligible (~0.007s) but breaks the
+// nearest-target tie identically in the game + verifier (2026-06-12-boss-seeded-skills §6.5).
+const ADD_DZ = 0.01
+
 // Builds all gameplay entities for the current stage from config (design 6.1).
 // reset(config) disposes and REBUILDS, so every per-entity flag (gate.done,
 // obstacle.broken, enemy.dead, powerup.collected) and the boss hp start clean
@@ -35,6 +39,27 @@ export class Track {
     this.enemies = (cfg.enemies || []).map((s) => new Enemy(this.scene, s, this.soldierGeo))
     this.powerups = (cfg.powerups || []).map((s) => new Powerup(this.scene, s))
     this.boss = new Boss(this.scene, cfg)
+    this.bossAdds = [] // squads summoned during the BOSS phase (2026-06-12-boss-seeded-skills)
+  }
+
+  // Spawn one summon wave of full-width marching adds (reuse Enemy; march + contact only). All adds
+  // share essentially the SAME gameplay Z with a tiny deterministic stagger (ADD_DZ) used identically
+  // in the verifier, so the nearest-target tie resolves the same on both sides (design §6.5). The
+  // ±0.6 X offset is COSMETIC-only (group.position.x, NOT e.xRange) so they don't visually stack
+  // while the full-width contact/targeting math is unchanged. chaseSpeed 0 ⇒ "kill before contact"
+  // (not steering) is the only out.
+  spawnBossAdds(count, hp, march, bossZ, roadHalf) {
+    for (let i = 0; i < count; i++) {
+      const z = bossZ - 2 - i * ADD_DZ
+      const e = new Enemy(this.scene, { z, hp, xRange: [-roadHalf, roadHalf], marchSpeed: march, chaseSpeed: 0 }, this.soldierGeo)
+      e.group.position.x += (i - (count - 1) / 2) * 0.6 // cosmetic-only render spread
+      this.bossAdds.push(e)
+    }
+  }
+
+  clearBossAdds() {
+    for (const e of this.bossAdds) this._removeObject(e.group)
+    this.bossAdds = []
   }
 
   // Never dispose the shared soldier geometry (page-lifetime singleton from models.js,
@@ -61,6 +86,8 @@ export class Track {
     for (const o of this.obstacles) this._removeObject(o.group)
     for (const e of this.enemies) this._removeObject(e.group)
     for (const p of this.powerups) this._removeObject(p.group)
+    for (const e of this.bossAdds || []) this._removeObject(e.group)
+    this.boss.dispose?.() // frees the scene-level slam marker (not in boss.group)
     this._removeObject(this.boss.group)
   }
 
