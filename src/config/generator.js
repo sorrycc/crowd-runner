@@ -35,7 +35,10 @@ export const MAX_COUNT = 1e12
 
 // ── combat / pacing constants ──
 const DPS = 0.9 // per-soldier firepower
-const FIRE_RANGE = 22
+// FIRE_RANGE is a GLOBAL PACING constant, not just a sight radius: it feeds slot = FIRE_RANGE+GAP
+// (threat spacing), the enemy engagement `window` (HP sizing), `maxThreats` (how many mandatory fit),
+// and therefore the clean carry army → boss bulletDamage. Raising it respaces + resizes everything.
+const FIRE_RANGE = 32
 const ROAD_HALF = 3.0
 const RUN_START = 14 // ease-in before the first gate
 const RUN_END = BOSS_Z - BOSS_STANDOFF // 360 — leaderZ at boss entry
@@ -66,6 +69,8 @@ const GAP = 6 // min gap between mandatory engagement windows (non-overlap invar
 const MANDATORY_BASE = 2
 const MANDATORY_CAP = 10
 const MARCH_SPEED = 1.2 // gentle: a fast march compresses the engagement window past the budget
+const CHASE_SPEED = 3.5 // X-homing rate (units/s) — squads track the player's lane (design 6.1)
+const ENEMY_HALF_WIDTH = 1.2 // narrow homing squad (~2.4 wide) that slides within the 6-wide road
 // Marching threats get a conservative engagement window so focus-fire contention (the army is busy
 // with a nearer threat while a squad marches into close range) never makes a CLEAN run drain.
 const ENEMY_WINDOW_SAFETY = 0.6
@@ -120,7 +125,7 @@ function makeGate(z, C, rng) {
 // `tanky` (elite blocks) raises the HP toward the clean ceiling but NEVER past it — an elite is the
 // beefiest must-shoot wall, not an unclearable one (the ×mult-after-clamp version made clean drain).
 function sizeThreat(cleanC, worstC, window, rng, tanky = false) {
-  const CLEAR_CEIL = 0.9 // clean always clears with ≥10% margin
+  const CLEAR_CEIL = 0.85 // clean always clears with ≥15% margin (absorbs FR=32 chain-drift; was 0.9)
   const cleanDmg = cleanC * DPS * window // damage a clean army deals in the window
   const worstDmg = worstC * DPS * window
   const lo = tanky ? 0.7 : BETA_MIN
@@ -222,7 +227,7 @@ export function generateStage(index, seed, preset) {
       // conservative window for marching squads absorbs focus-fire contention (no clean drain)
       const window = (FIRE_RANGE / (runSpeed + march)) * (isEnemy ? ENEMY_WINDOW_SAFETY : 1)
       const hp = sizeThreat(cleanC, worstC, window, rng, e.tkind === 'elite')
-      if (isEnemy) enemies.push({ z: e.z, hp, xRange: [-ROAD_HALF, ROAD_HALF], marchSpeed: march })
+      if (isEnemy) enemies.push({ z: e.z, hp, xRange: [-ENEMY_HALF_WIDTH, ENEMY_HALF_WIDTH], marchSpeed: march, chaseSpeed: CHASE_SPEED })
       else obstacles.push({ z: e.z, hp, xRange: [-ROAD_HALF, ROAD_HALF], fullWidth: true })
     }
   }

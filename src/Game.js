@@ -368,11 +368,11 @@ export class Game {
 
     // 3) ranged combat
     if (this.phase === 'RUN') {
-      for (const e of this.track.enemies) e.update(dt)
+      for (const e of this.track.enemies) e.update(dt, leaderX) // homes toward the player (design 6.1)
       for (const o of this.track.obstacles) o.update(dt) // ticks crumble anim (no-op otherwise)
       for (const p of this.track.powerups) p.update(dt)
 
-      const target = this._acquireTarget(leaderX, cfg.combat.fireRange)
+      const target = this._acquireTarget(cfg.combat.fireRange)
       if (target) {
         target.damage(F * dt)
         const aimX = (target.xRange[0] + target.xRange[1]) / 2
@@ -420,19 +420,22 @@ export class Game {
     this.hud.update(this._hudState())
   }
 
-  // Nearest engaged target ahead within fireRange (block or enemy), ties by lowest Z.
-  _acquireTarget(leaderX, fireRange) {
+  // Nearest target ahead within fireRange (block or enemy), ties by lowest Z. Lane-independent: the
+  // crowd auto-fires on the nearest threat ahead regardless of the player's X (design #2). Obstacles
+  // (incl. dodgeable side-blocks) and homing enemies are all targeted by Z, matching the verifier's
+  // by-Z model. Contact (losing soldiers) still requires physical alignment in _resolveCrossings.
+  _acquireTarget(fireRange) {
     let best = null
     let bestZ = Infinity
     const far = this.leaderZ + fireRange
     for (const o of this.track.obstacles) {
-      if (!o.broken && o.hp > 0 && o.z > this.leaderZ && o.z <= far && o.inRange(leaderX) && o.z < bestZ) {
+      if (!o.broken && o.hp > 0 && o.z > this.leaderZ && o.z <= far && o.z < bestZ) {
         best = o
         bestZ = o.z
       }
     }
     for (const e of this.track.enemies) {
-      if (!e.dead && e.hp > 0 && e.z > this.leaderZ && e.z <= far && e.inRange(leaderX) && e.z < bestZ) {
+      if (!e.dead && e.hp > 0 && e.z > this.leaderZ && e.z <= far && e.z < bestZ) {
         best = e
         bestZ = e.z
       }

@@ -45,9 +45,11 @@ function simulate(cfg, startCount, policy) {
   let sandLeft = 0
 
   const gates = cfg.gates.map((g) => ({ ...g, done: false })).sort((a, b) => a.z - b.z)
-  const blocks = cfg.obstacles
-    .filter((o) => (standDodge ? true : o.fullWidth))
-    .map((o) => ({ z: o.z, hp: o.hp, done: false }))
+  // Off-lane targeting (design #2): the crowd auto-fires on the NEAREST obstacle ahead by Z, dodgeable
+  // or not — so EVERY obstacle is a target candidate. Contact (losing soldiers) is separate: full-width
+  // guards always drain on cross; dodgeable side-blocks drain only if the policy stands in them
+  // (careless). `contact` flags which blocks can drain; all blocks are still shootable.
+  const blocks = cfg.obstacles.map((o) => ({ z: o.z, hp: o.hp, done: false, contact: o.fullWidth || standDodge }))
   const enemies = (cfg.enemies || []).map((e) => ({ z: e.z, hp: e.hp, march: e.marchSpeed || 0, done: false }))
   const mods = (cfg.modifiers || []).map((m) => ({ ...m, done: false })).sort((a, b) => a.z - b.z)
 
@@ -88,7 +90,10 @@ function simulate(cfg, startCount, policy) {
     if (target) { target.hp -= F * DT; if (target.hp <= 0) { target.hp = 0; target.done = true } }
 
     for (const b of blocks)
-      if (!b.done && b.z <= z) { const d = Math.min(count, Math.ceil(b.hp)); count -= d; contactDrain += d; b.done = true }
+      if (!b.done && b.z <= z) {
+        if (b.contact) { const d = Math.min(count, Math.ceil(b.hp)); count -= d; contactDrain += d } // else dodged/off-lane: slip past, no drain
+        b.done = true
+      }
     for (const e of enemies)
       if (!e.done && e.z <= z) { const d = Math.min(count, Math.ceil(e.hp)); count -= d; contactDrain += d; e.done = true }
 
@@ -156,6 +161,7 @@ const add = (name, pass) => checks.push([name, pass])
 const stats = {}
 for (const tier of TIERS) {
   let cleanWinAll = 0
+  let cleanZeroDrainAll = 0
   let sloppyLoseBy5 = 0
   let carelessLoseBy5 = 0
   let fightBandFails = 0
@@ -166,13 +172,18 @@ for (const tier of TIERS) {
 
   for (let s = 0; s < SEEDS; s++) {
     const cleanChain = chain(s, tier, 'clean', DEPTHS)
-    // clean must win every stage 1-5 with timer margin
+    // clean must win every stage 1-5 with timer margin AND take zero run-phase contact drain — a
+    // clean line clears every mandatory threat by fire (the redesign's zero-drain contract). The
+    // off-lane-targeting + longer-range changes must not regress this (design #2/#3).
     let okFinite = true
+    let zeroDrain = true
     for (let idx = 0; idx < FINITE; idx++) {
       const c = cleanChain[idx]
       if (!c || !c.r.win || c.r.runTime + c.r.fightTime > c.cfg.timeLimit - 2) okFinite = false
+      if (!c || c.r.contactDrain > 0) zeroDrain = false
     }
     if (okFinite) cleanWinAll++
+    if (zeroDrain) cleanZeroDrainAll++
 
     // boss-fight band + timer for every clean stage we reached (depths 1-12)
     for (const c of cleanChain) {
@@ -199,10 +210,11 @@ for (const tier of TIERS) {
     }
   }
 
-  stats[tier] = { cleanWinAll, sloppyLoseBy5, carelessLoseBy5, fightBandFails, timerFails, monoFails, fightSamples }
+  stats[tier] = { cleanWinAll, cleanZeroDrainAll, sloppyLoseBy5, carelessLoseBy5, fightBandFails, timerFails, monoFails, fightSamples }
 
   const T = tier.toUpperCase()
   add(`${T} clean wins stages 1-5 with margin (100% of seeds)`, cleanWinAll === SEEDS)
+  add(`${T} clean takes zero contact-drain in stages 1-5 (100% of seeds)`, cleanZeroDrainAll === SEEDS)
   add(`${T} sloppy loses by stage 5 (100% of seeds)`, sloppyLoseBy5 === SEEDS)
   add(`${T} careless loses by stage 5 (100% of seeds)`, carelessLoseBy5 === SEEDS)
   add(`${T} every clean boss fight in [5,18]s (no melt/stall)`, fightBandFails === 0)
@@ -236,7 +248,7 @@ console.log(`  ${SEEDS} seeds × depths 1-${DEPTHS} × {Normal, Hard} × {clean,
 for (const tier of TIERS) {
   const st = stats[tier]
   console.log(`══ ${tier.toUpperCase()} ══`)
-  console.log(`  clean wins 1-5: ${st.cleanWinAll}/${SEEDS}  ·  sloppy loses: ${st.sloppyLoseBy5}/${SEEDS}  ·  careless loses: ${st.carelessLoseBy5}/${SEEDS}`)
+  console.log(`  clean wins 1-5: ${st.cleanWinAll}/${SEEDS}  ·  clean zero-drain: ${st.cleanZeroDrainAll}/${SEEDS}  ·  sloppy loses: ${st.sloppyLoseBy5}/${SEEDS}  ·  careless loses: ${st.carelessLoseBy5}/${SEEDS}`)
   console.log(`  fight-band fails: ${st.fightBandFails}  ·  timer fails: ${st.timerFails}  ·  mono fails: ${st.monoFails}`)
   const med = st.fightSamples.map((a) => {
     if (!a.length) return '—'

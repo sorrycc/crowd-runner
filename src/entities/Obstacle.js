@@ -37,12 +37,19 @@ export class Obstacle {
     this.mat = new THREE.MeshStandardMaterial({ color: FULL.clone(), roughness: 0.85 })
     const tireGeo = new THREE.CylinderGeometry(TIRE_R, TIRE_R, TIRE_H, 16)
 
+    // Tires are collected so the stack can physically shrink under fire (design #2). Each tire is
+    // tagged with its height index k (0 = bottom … 2 = top); _refresh shows ceil(tiersPerCol·hpFrac)
+    // per column, hiding the top tier first → the stack reads as taking damage.
+    this.tires = []
+    this.tiersPerCol = 3
     for (let c = 0; c < cols; c++) {
       const x = x0 + (c + 0.5) * step
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < this.tiersPerCol; k++) {
         const tire = new THREE.Mesh(tireGeo, this.mat)
         tire.position.set(x, 0.2 + k * TIRE_H, 0)
+        tire.userData.k = k
         this.group.add(tire)
+        this.tires.push(tire)
       }
     }
 
@@ -77,6 +84,10 @@ export class Obstacle {
   _refresh() {
     const frac = Math.max(0, this.hp) / this.maxHp
     this.mat.color.copy(LOW).lerp(FULL, frac)
+    // physical shrink (design #2): each column keeps its bottom ceil(tiersPerCol·frac) tires, hiding
+    // the top tier first. frac > 0 while alive ⇒ at least one tier stays up until the block breaks.
+    const shownPerCol = Math.ceil(this.tiersPerCol * frac)
+    for (const t of this.tires) t.visible = t.userData.k < shownPerCol
     const shown = Math.max(0, Math.ceil(this.hp))
     if (shown !== this._hpShown) {
       updateTextSprite(this.tag, formatCount(shown))
@@ -110,6 +121,7 @@ export class Obstacle {
     this.broken = true // gameplay flag flips NOW (targeting/contact unchanged); mesh lingers
     this._dying = DEATH_TIME
     this._baseColor = this.mat.color.clone() // snapshot the current (low/red) tint to flash from
+    for (const t of this.tires) t.visible = true // restore the full stack so the crumble pop is whole
     this.tag.visible = false
   }
 }

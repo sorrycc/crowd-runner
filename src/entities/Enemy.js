@@ -22,6 +22,7 @@ export class Enemy {
     this.maxHp = spec.hp
     this.xRange = spec.xRange
     this.marchSpeed = spec.marchSpeed ?? 0
+    this.chaseSpeed = spec.chaseSpeed ?? 0 // X-homing rate toward the player (design 6.1)
     this.dead = false
     this._dying = 0 // > 0 only on a real kill (the silent slip-past leaves this 0)
     this._hpShown = -1
@@ -46,6 +47,13 @@ export class Enemy {
     this.mesh.frustumCulled = false
     this._dummy = new THREE.Object3D()
     this._x0 = x0
+    // homing base (design 6.1): the squad's resting symmetric range + center. `_off` is the live X
+    // slide applied via group.position.x, so the tag + soldiers ride toward the player without a
+    // per-frame relayout (_layout keeps using the base _x0).
+    this._baseX0 = x0
+    this._baseX1 = x1
+    this._baseCenter = (x0 + x1) / 2
+    this._off = 0
     this.group.add(this.mesh)
     this._layout(this.maxVisible)
 
@@ -78,10 +86,11 @@ export class Enemy {
     return x >= this.xRange[0] && x <= this.xRange[1]
   }
 
-  update(dt) {
+  update(dt, leaderX = null) {
     // fully dead + hidden (incl. the silent slip-past path in Game): do nothing
     if (this.dead && this._dying <= 0) return
-    // death anim only (flash + scale-pop), then hide
+    // death anim only (flash + scale-pop), then hide. Death/dying never home — the group keeps its
+    // last homed X so the death-pop plays where the squad was (design 6.1).
     if (this._dying > 0) {
       this._dying = Math.max(0, this._dying - dt)
       const p = 1 - this._dying / DEATH_TIME // 0 → 1
@@ -94,6 +103,16 @@ export class Enemy {
     // alive: march forward; the per-soldier bob + limb swing is the GPU animation in the
     // material, so the group itself no longer bobs.
     if (this.marchSpeed) this.z -= this.marchSpeed * dt
+    // full homing (design 6.1): a living squad lerps its center toward the player's X at chaseSpeed
+    // (clamped constant speed), so steering laterally can't dodge it. The group rides the slide so
+    // the tag + soldiers move with it, and xRange shifts so inRange/contact/aim track the squad.
+    if (this.chaseSpeed && leaderX != null) {
+      const target = leaderX - this._baseCenter
+      const step = this.chaseSpeed * dt
+      this._off += Math.max(-step, Math.min(step, target - this._off))
+      this.group.position.x = this._off
+      this.xRange = [this._baseX0 + this._off, this._baseX1 + this._off]
+    }
     // hit reaction (AC4): flash white + recoil while under fire. Continuous focus fire keeps
     // _hitFlash topped up, so the squad glows the whole time it's being shot, then resets.
     const k = this._hitFlash > 0 ? this._hitFlash / HIT_FLASH_TIME : 0
