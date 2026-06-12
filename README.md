@@ -1,9 +1,10 @@
 # Swarm Run
 
-A Count Masters–style hypercasual crowd-runner built with **Three.js + Vite**, using
-only simple primitives (no external assets, no audio). Auto-run down a 3D road, steer
-through `+N` / `×N` / `−N` gate pairs to grow your crowd, dodge or smash HP tire
-obstacles, and defeat the end-of-stage boss before the timer runs out.
+A Count Masters–style hypercasual **crowd shooter** built with **Three.js + Vite**,
+using only simple primitives (no external assets, no audio). Auto-run down a 3D road,
+steer through `+N` / `×N` / `−N` gate pairs to grow a squad of gun-toting soldiers who
+**auto-fire** at everything ahead — barricades, marching enemy squads, and two bosses.
+More soldiers means more firepower. Clear both stages before the timer runs out.
 
 ## Run
 
@@ -19,36 +20,69 @@ npm run build
 npm run preview
 ```
 
+Check the stage balance (headless, no browser):
+
+```bash
+npm run verify
+```
+
 ## Controls
 
 - **Steer:** drag / swipe left–right, or arrow keys / `A` `D`.
-- **Goal:** pick the better gate side to grow your crowd, dodge obstacles (or pay
-  crowd members to smash them), then overwhelm the boss before the clock hits `0:00`.
-- **Win:** boss HP reaches 0 before the timer expires.
-- **Lose:** the timer hits 0, or your crowd reaches 0.
+- **Soldiers fire automatically** at the nearest thing in front of them — you steer, they shoot.
+
+## How to play
+
+- **Grow your squad** by picking the better side of each `+N` / `×N` / `−N` gate.
+- **Shoot down barricades.** Full-width blocks must be destroyed before you reach them;
+  if you hit one with HP left, the leftover drains that many soldiers. Narrower blocks
+  can be dodged by steering around them.
+- **Enemy squads** march toward you — gun them down or they thin your ranks on contact.
+- **Grab power-ups** (former coin slots): ⚡ Rapid fire, ➕ Reinforcements, 🛡 Shield,
+  and `D` Damage boost. All are pure upside.
+- **Bosses shoot back.** Their shots are telegraphed and dodgeable — steer out of the
+  line of fire (or hold a Shield). Out-gun them before the clock hits `0:00`.
+- **Win:** defeat the **stage-2** boss with time remaining (clearing stage 1 auto-advances
+  you into stage 2, carrying your army over).
+- **Lose:** the timer hits 0, or your squad reaches 0.
 
 ## How it works
 
-- `src/main.js` — the single stage import site; constructs `Game(STAGE_1)`.
+- `src/main.js` — the stage-list import site; constructs `Game([STAGE_1, STAGE_2])`.
 - `src/Game.js` — state machine (`MENU → PLAYING(run|boss) → WIN/LOSE`), game loop,
-  collision/combat, win/lose, restart.
-- `src/config/stage1.js` — the **entire stage as data**: pacing, combat rates, and the
-  explicit gate / obstacle / coin / boss layout. Adding a stage is a new config file of
-  the same shape plus a one-line swap in `main.js` — no engine changes.
-- `src/core/` — `SceneManager` (renderer, chase camera, lights, fog, sky) and `Input`
-  (pointer + touch + keyboard steering).
+  ranged combat, power-up buffs, boss-bullet collision, stage auto-advance, restart.
+- `src/config/stage1.js` / `stage2.js` — each **stage as data**: pacing, combat rates,
+  and the explicit gate / block / enemy / power-up / boss layout. Adding a stage is a new
+  config file plus a one-line change in `main.js` — no engine changes.
+- `src/core/` — `SceneManager` (renderer, chase camera, lights, fog, sky) and `Input`.
 - `src/world/` — `Road`, `Environment` (seeded deterministic trees), `Track` (builds /
-  rebuilds entities from config).
-- `src/entities/` — `Crowd` (InstancedMesh formation, count math), `Gate`, `Obstacle`,
-  `Coin`, `Boss`.
-- `src/ui/` — `HUD` (count, combo, coins, timer, stage, top bar) and `Screens`.
+  rebuilds entities per stage).
+- `src/entities/` — `Crowd` (soldier InstancedMesh + count math), `Bullets` (pooled
+  projectiles, player + boss), `Gate`, `Obstacle` (destructible block), `Enemy`
+  (marching squad), `Powerup`, `Boss` (firepower drain + telegraphed return fire).
+- `src/util/soldier.js` — merged body+gun+helmet geometry (one draw call per army/enemy).
+- `src/ui/` — `HUD` (count, combo, timer, stage, top bar, active-buff chips) and `Screens`.
+
+## Combat model
+
+Army firepower `= count × perSoldierDPS × dmgMult × (rapid ? rapidMult : 1)` is applied
+each frame to the **nearest engaged target ahead** within `fireRange` (single-target
+focus fire). A target is *engaged* only when the leader's x is inside its x-range, so
+dodging a narrow block both avoids its damage and stops you wasting fire on it. Player
+bullets are visual tracers; boss bullets are simulated projectiles you dodge by steering.
 
 ## Tuning
 
-Gameplay/balance lives entirely in `src/config/stage1.js`: `timeLimit`, `runSpeed`,
-`crowdCap`, gate values, obstacle HP/positions, coin placements, `boss.hp`, and combat
-rates (`perMemberDPS`, `bossRemovalRate`). Boss solvability requires
-`perMemberDPS · c0² / (2 · bossRemovalRate) ≥ boss.hp`, where `c0` is the crowd size at
-the boss; the shipped numbers give a win threshold of ~49 crowd.
+Gameplay/balance lives entirely in the stage configs: `timeLimit`, `runSpeed`,
+`crowdCap`, gate values, block/enemy HP & positions (`fullWidth` = mandatory),
+power-up placements + `powerupTuning`, `boss.hp` / `fireInterval` / `burst` /
+`bulletSpeed`, and combat (`perSoldierDPS`, `fireRange`). `npm run verify` runs a stepped
+whole-run simulation proving a clean run clears every block/enemy and both bosses within
+the timers (with zero contact loss), while a careless run still loses.
 
-Design doc: `docs/designs/2026-06-12-crowd-runner-game.md`.
+Authoring rules baked into the verifier: mandatory threats (full-width blocks + enemies)
+don't have overlapping engagement windows (so focus-fire clears each before contact), and
+stage 2's first growth gate precedes any mandatory threat (so the carried-over floor army
+can grow before it can be wiped).
+
+Design doc: `docs/designs/2026-06-12-soldiers-shooter-rework.md`.

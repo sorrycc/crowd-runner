@@ -1,31 +1,36 @@
 import * as THREE from 'three'
 import { makeTextSprite, updateTextSprite } from '../util/text.js'
 
-// End-of-stage boss (design 6.4/6.8). During the BOSS phase the crowd auto-attacks:
-// damage uses the PRE-removal crowd count so the killing blow still lands, then the
-// boss removes members via the fractional accumulator. Win when hp<=0 (checked
-// before lose, design 6.5).
+// End-of-stage boss (design 6.6). The army's firepower (count × perSoldierDPS ×
+// dmgMult × rapid, computed in Game) drains the boss each frame. The boss no longer
+// drains the crowd at a fixed rate — its only threat is telegraphed projectiles it
+// fires at the army on a cadence (aimed at the army's current x, so steering dodges
+// them). Game owns the boss-bullet pool and the collision test; Boss just requests a
+// shot via bossBullets.spawn() and flashes a muzzle telegraph.
+
+const _flashColor = new THREE.Color(0xfca5a5)
 
 export class Boss {
   constructor(scene, config) {
     this.z = config.boss.z
     this.maxHp = config.boss.hp
     this.hp = config.boss.hp
-    this.perMemberDPS = config.combat.perMemberDPS
-    this.removalRate = config.combat.bossRemovalRate
+    this.fireInterval = config.boss.fireInterval ?? 1.6
+    this.burst = config.boss.burst ?? 6
+    this.bulletSpeed = config.boss.bulletSpeed ?? 20
     this._hpShown = -1
+    this._fireTimer = 0
+    this._flash = 0
 
     this.group = new THREE.Group()
     this.group.position.set(0, 0, config.boss.z)
 
-    const body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(1.3, 2.4, 6, 14),
-      new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.55 })
-    )
+    this.bodyMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.55 })
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(1.3, 2.4, 6, 14), this.bodyMat)
     body.position.y = 2.1
     this.group.add(body)
+    this._baseColor = this.bodyMat.color.clone()
 
-    // simple face
     const eyeGeo = new THREE.SphereGeometry(0.22, 10, 10)
     const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111827 })
     for (const sx of [-0.45, 0.45]) {
@@ -33,6 +38,14 @@ export class Boss {
       eye.position.set(sx, 3.1, -1.15)
       this.group.add(eye)
     }
+    // gun barrel pointing toward the player (−Z)
+    const barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.22, 1.6, 12),
+      new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.5 })
+    )
+    barrel.rotation.x = Math.PI / 2
+    barrel.position.set(0, 1.9, -1.4)
+    this.group.add(barrel)
 
     this.tag = makeTextSprite(String(this.hp), {
       scale: 2.2,
@@ -49,15 +62,47 @@ export class Boss {
     return Math.max(0, this.hp) / this.maxHp
   }
 
-  update(dt, crowd) {
-    // damage from the pre-removal crowd value (design 6.4)
-    this.hp -= crowd.count * this.perMemberDPS * dt
-    crowd.removeContinuous(this.removalRate * dt)
+  // `firepower` already folds in count, dmgMult and rapid-fire (computed by Game).
+  // Fires into the supplied boss-bullet pool, aimed at (armyX, armyZ).
+  update(dt, firepower, armyX, armyZ, bossBullets) {
+    this.hp -= firepower * dt
+
+    if (this.hp > 0) {
+      this._fireTimer += dt
+      if (this._fireTimer >= this.fireInterval) {
+        this._fireTimer -= this.fireInterval
+        this._fire(armyX, armyZ, bossBullets)
+      }
+    }
+
+    // muzzle-flash telegraph decay
+    if (this._flash > 0) {
+      this._flash = Math.max(0, this._flash - dt)
+      this.bodyMat.color.copy(this._baseColor).lerp(_flashColor, this._flash / 0.18)
+    }
 
     const shown = Math.max(0, Math.ceil(this.hp))
     if (shown !== this._hpShown) {
       updateTextSprite(this.tag, shown)
       this._hpShown = shown
     }
+  }
+
+  _fire(armyX, armyZ, bossBullets) {
+    if (!bossBullets) return
+    this._flash = 0.18
+    const ox = 0
+    const oy = 1.9
+    const oz = this.z - 1.4
+    const tx = armyX
+    const ty = 0.6
+    const tz = armyZ
+    const dx = tx - ox
+    const dy = ty - oy
+    const dz = tz - oz
+    const dist = Math.hypot(dx, dy, dz) || 1
+    const s = this.bulletSpeed / dist
+    const life = dist / this.bulletSpeed + 0.4
+    bossBullets.spawn(ox, oy, oz, dx * s, dy * s, dz * s, life)
   }
 }

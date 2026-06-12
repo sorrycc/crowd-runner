@@ -1,72 +1,87 @@
-// ── Stage 1 — the entire stage authored as data (design 6.7) ──────────────────
-// Track/Crowd/Boss/Environment read ONLY from this object, so adding a "stage 2"
-// is a new file with the same shape + a one-line swap in main.js (AC16).
+// ── Stage 1 — authored as data (design 6.10) ─────────────────────────────────
+// Track/Crowd/Boss/Enemy/Track read ONLY from this object; adding a stage is a new
+// file of the same shape + a one-line swap in main.js (AC11/AC15).
 //
-// Gate ops: ['add', n] -> +n | ['mul', n] -> ×n | ['sub', n] -> −n  (no division)
-// Best-path simulation (always pick the higher-result side), start count = 1:
-//   1@z28  ×2 vs +6   -> +6  => 7
-//   2@z62  +14 vs ×2  -> +14 => 21
-//   3@z98  ×2 vs +12  -> ×2  => 42
-//   4@z134 −12 vs +18 -> +18 => 60
-//   5@z172 +25 vs −10 -> +25 => 85
-//   6@z212 +20 vs +10 -> +20 => 105   (all-positive pair, like the reference +15/+5)
-// A clean run that dodges every obstacle reaches the boss with ~105 crowd — well
-// above the ~49 win threshold (see boss-solvability note in design 6.8). Hitting
-// obstacles drains members, so careless runs can dip below the threshold and lose.
+// Combat is ranged: army firepower = count · perSoldierDPS · dmgMult · (rapid?·)
+// hits the nearest ENGAGED target ahead within fireRange. Full-width blocks and
+// enemies are mandatory (must be shot down before contact); dodgeable blocks have a
+// sub-range you steer around (then they're never engaged → no fire, no loss).
 //
-// Combat solvability (design 6.8): total damage the crowd can deal before being
-// drained is perMemberDPS·c0²/(2·bossRemovalRate). For c0=49 that is ~294 ≈ boss.hp,
-// so ~49 is the break-even; ~105 wins with large margin.
+// Best-path gate sim (always the higher side), start = 1:
+//   z26  ×3 vs +8  -> +8 => 9
+//   z58  +20 vs ×2 -> +20 => 29
+//   z96  ×2 vs +16 -> ×2 => 58
+//   z140 −18 vs +24-> +24 => 82
+//   z186 +30 vs −12-> +30 => 112
+//   z232 +22 vs +12-> +22 => 134
+// A clean run reaches the boss with ~134 soldiers; mandatory threats are tuned so a
+// clean run destroys each before contact (zero soldier loss). Worst-path picks the
+// lower side every gate and is wiped by z140 (−18 on 12 → 0). Verified by
+// scripts/verify-balance.mjs.
 
 export default {
   id: 'stage-1',
   label: 'STAGE 1',
 
   // ── pacing / world ──
-  timeLimit: 90, // seconds (single authoritative countdown)
-  runSpeed: 14, // forward units / second
-  roadHalf: 3.0, // road spans x ∈ [-roadHalf, roadHalf]
-  crowdCap: 200, // hard max crowd, clamp at cap
+  timeLimit: 60,
+  runSpeed: 16,
+  roadHalf: 3.0,
+  crowdCap: 200,
   startCount: 1,
-  seed: 1337, // decorative scatter seed (deterministic visuals)
-  bossStandoff: 4, // leader stops this far before boss.z to fight
+  seed: 1337,
+  bossStandoff: 20, // big standoff so boss bullets have a real dodge window
 
-  // ── combat (retuned in Phase 4 review for solvability) ──
+  // ── combat ──
   combat: {
-    perMemberDPS: 1.0, // damage/sec per crowd member at the boss
-    bossRemovalRate: 4, // crowd members/sec the boss removes during the fight
+    perSoldierDPS: 0.9, // firepower per soldier per second
+    fireRange: 22, // how far ahead the army can engage a target
   },
 
-  boss: { z: 360, hp: 300 },
+  boss: { z: 360, hp: 520, fireInterval: 1.6, burst: 6, bulletSpeed: 20 },
 
-  // ── gameplay entities (explicit positions => deterministic, AC15) ──
-  // No `sub` gate or obstacle sits in the final approach band [bossZ-standoff, bossZ].
+  // ── power-up tuning (all four types) ──
+  powerupTuning: {
+    rapidMult: 2.2,
+    rapidDuration: 6,
+    reinforce: 25,
+    shieldDuration: 7,
+    dmgBoostStep: 0.15,
+    dmgCap: 1.6,
+  },
+
+  // gate pairs: ['add',n] +n | ['mul',n] ×n | ['sub',n] −n
   gates: [
-    { z: 28, left: ['mul', 2], right: ['add', 6] },
-    { z: 62, left: ['add', 14], right: ['mul', 2] },
-    { z: 98, left: ['mul', 2], right: ['add', 12] },
-    { z: 134, left: ['sub', 12], right: ['add', 18] },
-    { z: 172, left: ['add', 25], right: ['sub', 10] },
-    { z: 212, left: ['add', 20], right: ['add', 10] },
+    { z: 26, left: ['mul', 3], right: ['add', 8] },
+    { z: 58, left: ['add', 20], right: ['mul', 2] },
+    { z: 96, left: ['mul', 2], right: ['add', 16] },
+    { z: 140, left: ['sub', 18], right: ['add', 24] },
+    { z: 186, left: ['add', 30], right: ['sub', 12] },
+    { z: 232, left: ['add', 22], right: ['add', 12] },
   ],
 
-  // Obstacles occupy an x-range; you can dodge by steering out of the range,
-  // or plow through and lose `hp` members (1 member per 1 HP).
+  // fullWidth => spans the road (mandatory, must shoot). Others are dodgeable.
   obstacles: [
-    { z: 115, hp: 20, xRange: [-3.0, 0.2] }, // dodge right
-    { z: 192, hp: 30, xRange: [-0.2, 3.0] }, // dodge left
-    { z: 250, hp: 40, xRange: [-1.4, 1.4] }, // dodge to either edge
+    { z: 44, hp: 20, xRange: [-3.0, 0.3] }, // dodge right
+    { z: 118, hp: 50, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
+    { z: 210, hp: 30, xRange: [-0.3, 3.0] }, // dodge left
+    { z: 256, hp: 70, xRange: [-3.0, 3.0], fullWidth: true }, // must shoot
   ],
 
-  coins: [
-    { z: 45, x: -1.4 },
-    { z: 80, x: 1.2 },
-    { z: 120, x: 2.0 },
-    { z: 160, x: -1.6 },
-    { z: 205, x: 0.6 },
-    { z: 245, x: -2.0 },
-    { z: 300, x: 0.0 },
+  // marching enemy squads (full-lane, mandatory) — shoot down or lose soldiers
+  enemies: [
+    { z: 170, hp: 55, xRange: [-3.0, 3.0], marchSpeed: 4 },
+    { z: 305, hp: 80, xRange: [-3.0, 3.0], marchSpeed: 5 },
   ],
 
-  trees: 56, // count; positions from the seeded rng along both shoulders
+  // power-ups (former coin slots): rapid | reinforce | shield | damage — pure upside
+  powerups: [
+    { z: 70, x: -1.4, type: 'rapid' },
+    { z: 150, x: 1.6, type: 'reinforce' },
+    { z: 200, x: -1.8, type: 'shield' },
+    { z: 280, x: 0.6, type: 'damage' },
+    { z: 320, x: -1.0, type: 'damage' },
+  ],
+
+  trees: 56,
 }

@@ -1,20 +1,28 @@
 import * as THREE from 'three'
-import { makeTextSprite } from '../util/text.js'
+import { makeTextSprite, updateTextSprite } from '../util/text.js'
 
-// An HP "tire stack" barrier across an x-range (design 6.4). Crossing it while the
-// leader x is inside the range drains 1 member per 1 HP (strict). You can dodge by
-// steering out of the range. A single crossing resolves it: it either breaks (crowd
-// >= hp) or the crowd is wiped first (-> lose).
+// A destructible road block (design 6.4). `hp` is a float that drains under fire
+// while the army is *engaged* (leaderX ∈ xRange). The HP sprite ticks down live
+// (shown as ceil(hp)) and the block tints from green→red and crumbles at 0. If the
+// army reaches it with hp left, the leftover drains min(count, ceil(hp)) soldiers on
+// contact (1 per remaining HP), unless a Shield is active. `fullWidth` blocks span
+// the road and cannot be dodged; dodgeable blocks have a sub-range you steer around
+// (and are then never engaged → never shot, never contacted).
 
 const TIRE_R = 0.45
 const TIRE_H = 0.32
+const FULL = new THREE.Color(0x22c55e)
+const LOW = new THREE.Color(0xef4444)
 
 export class Obstacle {
   constructor(scene, spec) {
     this.z = spec.z
     this.hp = spec.hp
+    this.maxHp = spec.hp
     this.xRange = spec.xRange
+    this.fullWidth = !!spec.fullWidth
     this.broken = false
+    this._hpShown = -1
 
     this.group = new THREE.Group()
     this.group.position.z = spec.z
@@ -23,37 +31,67 @@ export class Obstacle {
     const width = x1 - x0
     const cols = Math.max(1, Math.round(width / 0.95))
     const step = width / cols
-    const tireMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.9 })
+    this.mat = new THREE.MeshStandardMaterial({ color: FULL.clone(), roughness: 0.85 })
     const tireGeo = new THREE.CylinderGeometry(TIRE_R, TIRE_R, TIRE_H, 16)
 
     for (let c = 0; c < cols; c++) {
       const x = x0 + (c + 0.5) * step
       for (let k = 0; k < 3; k++) {
-        const tire = new THREE.Mesh(tireGeo, tireMat)
+        const tire = new THREE.Mesh(tireGeo, this.mat)
         tire.position.set(x, 0.2 + k * TIRE_H, 0)
         this.group.add(tire)
       }
     }
 
-    this.tag = makeTextSprite(String(this.hp), {
+    this.tag = makeTextSprite(String(Math.ceil(this.hp)), {
       scale: 1.5,
-      accent: '#22c55e',
+      accent: '#ffffff',
       bg: 'rgba(17,24,39,0.95)',
     })
     this.tag.position.set((x0 + x1) / 2, 1.55, 0)
     this.group.add(this.tag)
 
     scene.add(this.group)
+    this._refresh()
   }
 
   inRange(x) {
     return x >= this.xRange[0] && x <= this.xRange[1]
   }
 
-  hit(crowd) {
-    const drained = Math.min(crowd.count, this.hp)
-    crowd.sub(drained)
-    this.hp -= drained
+  _refresh() {
+    const frac = Math.max(0, this.hp) / this.maxHp
+    this.mat.color.copy(LOW).lerp(FULL, frac)
+    const shown = Math.max(0, Math.ceil(this.hp))
+    if (shown !== this._hpShown) {
+      updateTextSprite(this.tag, shown)
+      this._hpShown = shown
+    }
+  }
+
+  // Continuous ranged damage while engaged (called each frame from Game).
+  damage(amount) {
+    if (this.broken) return
+    this.hp -= amount
+    if (this.hp <= 0) {
+      this.hp = 0
+      this._break()
+    } else {
+      this._refresh()
+    }
+  }
+
+  // Reached with hp left → drain leftover (ceil) unless shielded. Returns soldiers lost.
+  contact(crowd, shielded) {
+    if (this.broken) return 0
+    const drained = shielded ? 0 : Math.min(crowd.count, Math.ceil(this.hp))
+    if (drained > 0) crowd.sub(drained)
+    this.hp = 0
+    this._break()
+    return drained
+  }
+
+  _break() {
     this.broken = true
     this.group.visible = false
   }

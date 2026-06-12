@@ -48,9 +48,33 @@
       font-weight: 700; font-size: 15px; line-height: 1;
       padding: 8px 14px; border-radius: 999px; white-space: nowrap;
     }
-    #hud-coins::before { content: "🪙 "; }
     #hud-combo { color: #fbbf24; }
     #hud-combo.hidden { display: none; }
+
+    /* active power-up chips */
+    #hud-buffs {
+      position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+      padding: 0 12px; max-width: 100%;
+    }
+    .buff {
+      color: #0b1020; font-weight: 800; font-size: 13px; line-height: 1;
+      padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .buff.hidden { display: none; }
+    .buff-rapid { background: #fb923c; }
+    .buff-shield { background: #38bdf8; }
+    .buff-damage { background: #f87171; }
+
+    /* stage-advance banner */
+    #hud-banner {
+      position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%);
+      color: #fff; font-weight: 900; font-size: clamp(28px, 8vw, 56px);
+      letter-spacing: 2px; text-shadow: 0 4px 18px rgba(0,0,0,0.6);
+      opacity: 0; transition: opacity 0.25s ease;
+    }
+    #hud-banner.show { opacity: 1; }
 
     /* ---- Screens ---- */
     .screen {
@@ -84,9 +108,14 @@
   <div id="hud">
     <div id="progress"><div id="progress-fill"></div></div>
     <div id="hud-count">1</div>
+    <div id="hud-buffs">
+      <div id="buff-rapid" class="buff buff-rapid hidden">⚡ RAPID</div>
+      <div id="buff-shield" class="buff buff-shield hidden">🛡 SHIELD</div>
+      <div id="buff-damage" class="buff buff-damage hidden">DMG ×1.0</div>
+    </div>
+    <div id="hud-banner"></div>
     <div id="hud-bottom">
       <div id="hud-stage" class="pill">STAGE 1</div>
-      <div id="hud-coins" class="pill">0</div>
       <div id="hud-combo" class="pill hidden">0 COMBO</div>
       <div id="hud-timer" class="pill">0:00</div>
     </div>
@@ -95,7 +124,7 @@
   <!-- Start screen -->
   <div id="screen-start" class="screen show">
     <h1>SWARM RUN</h1>
-    <p>Steer through gates to grow your crowd, smash the obstacles, and crush the boss before time runs out.</p>
+    <p>Steer through gates to grow your squad of gunners. They auto-fire — more soldiers, more firepower. Shoot down barricades and enemy squads, grab power-ups, dodge the boss's shots, and crush both bosses before time runs out.</p>
     <button id="btn-start" class="btn">START</button>
     <div class="hint">Drag / swipe or use ← → (A / D) to steer.</div>
   </div>
