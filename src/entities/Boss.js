@@ -64,14 +64,18 @@ export class Boss {
 
   // `firepower` already folds in count, dmgMult and rapid-fire (computed by Game).
   // Fires into the supplied boss-bullet pool, aimed at (armyX, armyZ).
+  // Returns true on the frame it fires a telegraphed shot (a pure signal so Game can play
+  // the boss-shot SFX without coupling Boss to the AudioManager — design Decision 4).
   update(dt, firepower, armyX, armyZ, bossBullets) {
     this.hp -= firepower * dt
 
+    let fired = false
     if (this.hp > 0) {
       this._fireTimer += dt
       if (this._fireTimer >= this.fireInterval) {
         this._fireTimer -= this.fireInterval
         this._fire(armyX, armyZ, bossBullets)
+        fired = true
       }
     }
 
@@ -86,6 +90,8 @@ export class Boss {
       updateTextSprite(this.tag, shown)
       this._hpShown = shown
     }
+
+    return fired
   }
 
   _fire(armyX, armyZ, bossBullets) {

@@ -31,6 +31,22 @@
       transition: width 0.08s linear;
     }
 
+    /* mute toggle (HUD corner) */
+    #btn-mute {
+      position: absolute; top: 34px; right: 12px;
+      pointer-events: auto; cursor: pointer;
+      width: 40px; height: 40px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--pill-bg); color: var(--pill-fg);
+      border: none; border-radius: 999px;
+      font-size: 19px; line-height: 1;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.05s ease, opacity 0.15s ease;
+    }
+    #btn-mute:active { transform: scale(0.92); }
+    #btn-mute.is-muted { opacity: 0.72; }
+
     #hud-count {
       position: absolute; top: 38px; left: 50%; transform: translateX(-50%);
       background: var(--pill-bg); color: var(--pill-fg);
@@ -107,6 +123,7 @@
   <!-- In-game HUD overlay -->
   <div id="hud">
     <div id="progress"><div id="progress-fill"></div></div>
+    <button id="btn-mute" aria-label="Mute" aria-pressed="false">🔊</button>
     <div id="hud-count">1</div>
     <div id="hud-buffs">
       <div id="buff-rapid" class="buff buff-rapid hidden">⚡ RAPID</div>

@@ -28,10 +28,12 @@ const HIT_RADIUS = FORMATION_HALF_WIDTH + 0.2
 
 const PLAYER_BULLET_SPEED = 60
 const FIRE_CADENCE = 0.05 // seconds between muzzle volleys
+const SHOOT_SFX_CADENCE = 0.11 // seconds between shoot SFX (slower than the visual volley)
 
 export class Game {
-  constructor(stages) {
+  constructor(stages, audio = null) {
     this.stages = Array.isArray(stages) ? stages : [stages]
+    this.audio = audio // AudioManager (optional; every call site guards with ?. — AC7)
     this.stageIndex = 0
     this.config = this.stages[0]
     this.trackLength = this.config.boss.z + END_PAD
@@ -63,7 +65,7 @@ export class Game {
       length: 0.5,
     })
 
-    this.hud = new HUD()
+    this.hud = new HUD(audio)
     this.screens = new Screens({
       onStart: () => this.start(),
       onRestart: () => this.restart(),
@@ -84,6 +86,7 @@ export class Game {
 
     this._fireAcc = 0
     this._bulletTick = 0
+    this._shootSfxAcc = 0
 
     this._last = performance.now()
     this._loop = this._loop.bind(this)
@@ -98,12 +101,18 @@ export class Game {
     this.screens.hideAll()
     this.hud.show(this.config.label)
     this.hud.update(this._hudState())
+    // Audio unlock runs inside the Start-click stack so the user gesture is preserved
+    // (AC6). playMusic() queues until decode finishes on first run; starts from the top
+    // on restart (see AudioManager regimes).
+    this.audio?.unlock()
+    this.audio?.playMusic()
   }
 
   restart() {
     this.stageIndex = 0
     this.config = this.stages[0]
     this.dmgMult = 1 // full reset of permanent buffs (AC12)
+    this.audio?.stopMusic() // ensure music restarts from the top via start() (AC4)
     this.track.reset(this.config)
     this.start()
   }
@@ -118,6 +127,7 @@ export class Game {
     this._resetStageState(Math.max(carried, this.config.startCount))
     this.hud.show(this.config.label)
     this.hud.flashBanner(this.config.label)
+    this.audio?.play('stage-advance') // music keeps looping seamlessly across the advance
   }
 
   // Reset everything per-stage; clears timed buffs + bullet pools, keeps dmgMult.
@@ -130,6 +140,7 @@ export class Game {
     this.rapidLeft = 0
     this.shieldLeft = 0
     this._fireAcc = 0
+    this._shootSfxAcc = 0
 
     this.playerBullets.clear()
     this.bossBullets.clear()
@@ -188,11 +199,17 @@ export class Game {
         target.damage(F * dt)
         const aimX = (target.xRange[0] + target.xRange[1]) / 2
         this._fire(dt, aimX, target.z)
+        // death edge: target is an Obstacle (.broken) or an Enemy (.dead) — mutually
+        // exclusive props, so the absent one reads falsy. enemy-down fires only from this
+        // focus-fire kill, never the slip-past path in _resolveCrossings.
+        if (target.broken) this.audio?.play('block-break')
+        else if (target.dead) this.audio?.play('enemy-down')
       }
       this._resolveCrossings(leaderX, shielded)
     } else {
       // BOSS phase
-      this.track.boss.update(dt, F, leaderX, this.leaderZ, this.bossBullets)
+      const bossFired = this.track.boss.update(dt, F, leaderX, this.leaderZ, this.bossBullets)
+      if (bossFired) this.audio?.play('boss-shot', { volume: 0.6 })
       this._fire(dt, 0, cfg.boss.z - 1.4)
       this._resolveBossBullets(leaderX, shielded)
     }
@@ -204,6 +221,9 @@ export class Game {
 
     // 5) win check (before lose — design 6.5)
     if (this.track.boss.hp <= 0 && this.timeRemaining > 0) {
+      // boss-down fires exactly once: WIN → state leaves PLAYING next frame; advance →
+      // track.reset restores full boss hp so this branch is false next frame.
+      this.audio?.play('boss-down')
       if (this.stageIndex < this.stages.length - 1) {
         this._advanceStage()
         return
@@ -251,6 +271,12 @@ export class Game {
         this.playerBullets.spawn(m.x, m.y, m.z, dx * s, dy * s, dz * s, dist / PLAYER_BULLET_SPEED + 0.12)
       }
     }
+    // Shoot SFX on its own slower cadence (the 0.05s volley rate would machine-gun audio).
+    this._shootSfxAcc += dt
+    if (this._shootSfxAcc >= SHOOT_SFX_CADENCE) {
+      this._shootSfxAcc = 0
+      this.audio?.play('shoot', { volume: 0.5 })
+    }
   }
 
   _resolveCrossings(leaderX, shielded) {
@@ -261,6 +287,7 @@ export class Game {
       if (!g.done && g.z > a && g.z <= b) {
         const { good } = g.apply(this.crowd, leaderX)
         this.combo = good ? this.combo + 1 : 0
+        this.audio?.play(good ? 'gate-good' : 'gate-bad')
       }
     }
     // blocks: reached with hp left while engaged → leftover drains (unless shielded)
@@ -268,7 +295,10 @@ export class Game {
       if (!o.broken && o.z > a && o.z <= b) {
         if (o.inRange(leaderX) && o.hp > 0) {
           const drained = o.contact(this.crowd, shielded)
-          if (drained > 0) this.combo = 0
+          if (drained > 0) {
+            this.combo = 0
+            this.audio?.play('hurt')
+          }
         }
       }
     }
@@ -277,10 +307,13 @@ export class Game {
       if (!e.dead && e.z <= b) {
         if (e.inRange(leaderX) && e.hp > 0) {
           const drained = e.contact(this.crowd, shielded)
-          if (drained > 0) this.combo = 0
+          if (drained > 0) {
+            this.combo = 0
+            this.audio?.play('hurt')
+          }
         } else {
           e.dead = true
-          e.group.visible = false // dodged / slipped past — no loss
+          e.group.visible = false // dodged / slipped past — no loss (silent)
         }
       }
     }
@@ -301,6 +334,7 @@ export class Game {
           if (!shielded) {
             this.crowd.removeBurst(burst)
             this.combo = 0
+            this.audio?.play('hurt') // multi-bullet frames collapse to one hit via guard
           }
         }
         this.bossBullets.deactivate(i) // hit, absorbed, or passed
@@ -309,6 +343,7 @@ export class Game {
   }
 
   _applyPowerup(type) {
+    this.audio?.play('powerup')
     const t = this.config.powerupTuning
     if (type === 'rapid') this.rapidLeft = t.rapidDuration
     else if (type === 'reinforce') this.crowd.add(t.reinforce)
@@ -318,6 +353,8 @@ export class Game {
 
   _end(result) {
     this.state = result
+    this.audio?.stopMusic() // music stops on WIN/LOSE; the sting plays clean over silence
+    this.audio?.play(result === 'WIN' ? 'win' : 'lose')
     const stats = `Crowd ${this.crowd.count}  ·  Stage ${this.stageIndex + 1}`
     if (result === 'WIN') this.screens.showWin(stats)
     else this.screens.showLose(stats)

@@ -14,7 +14,8 @@ function clampPct(p) {
 }
 
 export class HUD {
-  constructor() {
+  constructor(audio = null) {
+    this.audio = audio
     this.root = document.getElementById('hud')
     this.fill = document.getElementById('progress-fill')
     this.count = document.getElementById('hud-count')
@@ -28,6 +29,26 @@ export class HUD {
     this.buffDamage = document.getElementById('buff-damage')
 
     this._bannerTimer = null
+
+    // Mute toggle (HUD corner; in-game only). Default unmuted, state persisted by the
+    // AudioManager to localStorage; clicking silences SFX + music live via the master gain.
+    this.muteBtn = document.getElementById('btn-mute')
+    if (this.muteBtn && this.audio) {
+      this.muteBtn.addEventListener('click', () => {
+        this.audio.setMuted(!this.audio.isMuted())
+        this._renderMute()
+      })
+      this._renderMute() // reflect persisted state on load
+    }
+  }
+
+  _renderMute() {
+    if (!this.muteBtn || !this.audio) return
+    const muted = this.audio.isMuted()
+    this.muteBtn.textContent = muted ? '🔇' : '🔊'
+    this.muteBtn.classList.toggle('is-muted', muted)
+    this.muteBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute')
+    this.muteBtn.setAttribute('aria-pressed', String(muted))
   }
 
   show(label) {
