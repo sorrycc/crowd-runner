@@ -13,6 +13,11 @@
 //   z252 +30 vs +15-> +30 => 200
 // Both the floored army and a big carried army clear every mandatory threat before
 // contact and beat the boss in time. Verified by scripts/verify-balance.mjs.
+//
+// Difficulty (rebalance 2026-06-12): the finale boss has hp 1600 + heavier offense
+// (burst 13 @ 1.1s, faster bullets) so the capped 200-army fight lasts ~9s and an
+// undodged army is drained to ~31. Power-ups nerfed to an edge (dmgCap 1.3 × rapid 1.5)
+// → no instant melt (~4.6s even buffed at cap). Clean run still wins; eating bullets loses.
 
 export default {
   id: 'stage-2',
@@ -31,23 +36,23 @@ export default {
     fireRange: 22,
   },
 
-  boss: { z: 360, hp: 720, fireInterval: 1.3, burst: 8, bulletSpeed: 22 },
+  boss: { z: 360, hp: 1600, fireInterval: 1.1, burst: 13, bulletSpeed: 25 },
 
   powerupTuning: {
-    rapidMult: 2.2,
-    rapidDuration: 6,
-    reinforce: 25,
-    shieldDuration: 7,
-    dmgBoostStep: 0.15,
-    dmgCap: 1.6,
+    rapidMult: 1.5,
+    rapidDuration: 5,
+    reinforce: 18,
+    shieldDuration: 4,
+    dmgBoostStep: 0.1,
+    dmgCap: 1.3,
   },
 
   gates: [
     { z: 24, left: ['add', 12], right: ['mul', 2] },
     { z: 64, left: ['mul', 2], right: ['add', 30] },
-    { z: 108, left: ['add', 40], right: ['sub', 20] },
+    { z: 108, left: ['add', 40], right: ['sub', 30] },
     { z: 156, left: ['mul', 2], right: ['add', 25] },
-    { z: 206, left: ['add', 20], right: ['sub', 15] },
+    { z: 206, left: ['add', 20], right: ['sub', 25] },
     { z: 252, left: ['add', 30], right: ['add', 15] },
   ],
 

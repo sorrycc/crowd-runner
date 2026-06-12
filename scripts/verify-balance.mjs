@@ -3,12 +3,23 @@
 // CONTRACT, not a bit-exact browser replay (the browser uses variable dt); a clean
 // run must clear with margin to absorb dt variance. Run: node scripts/verify-balance.mjs
 //
-// Policies (design Decision 9):
+// Policies (design Decision 9; rebalance 2026-06-12):
 //  • clean   — best-side gates, dodge every dodgeable block, must-shoot every
 //              full-width block + enemy, dodge boss bullets, NO power-ups assumed
 //              (power-ups are pure upside). Must WIN with ZERO contact drain.
 //  • careless— worst-side gates, stand in every block + enemy, eat boss bullets,
 //              no power-ups. Must LOSE.
+//  • sloppy  — worst-side gates but otherwise competent (dodge dodgeables, shoot
+//              mandatory blocks/enemies), no power-ups, eats boss bullets. Models bad
+//              gate sense + wasted power-ups + sloppy boss dodging. Must LOSE.
+//  • undodged— best-side gates + competent run (like clean, zero contact drain) but
+//              EATS every boss bullet, no power-ups. Models "perfect run, sloppy at the
+//              boss"; anchors the boss HP/offense numbers — must drain heavily at the boss.
+//
+// Three orthogonal policy traits (so clean/careless behave EXACTLY as before):
+//   bestGates        = clean | undodged   (else worst-side gates)
+//   standInDodgeables= careless           (else dodge dodgeables, like clean)
+//   eatsBullets      = anything but clean
 import STAGE_1 from '../src/config/stage1.js'
 import STAGE_2 from '../src/config/stage2.js'
 
@@ -21,7 +32,9 @@ function applyGate(count, [t, v], cap) {
 
 // Simulate one stage from `startCount` under a policy. Mirrors Game per-frame order.
 function simulate(stage, startCount, policy) {
-  const clean = policy === 'clean'
+  const bestGates = policy === 'clean' || policy === 'undodged'
+  const standInDodgeables = policy === 'careless'
+  const eatsBullets = policy !== 'clean'
   const cap = stage.crowdCap
   const d = stage.combat.perSoldierDPS
   const fireRange = stage.combat.fireRange
@@ -31,11 +44,12 @@ function simulate(stage, startCount, policy) {
   let leaderZ = 0
   let time = stage.timeLimit
   let contactDrain = 0
+  let bossEntryCount = startCount // set at boss entry; used for bossDrain
 
   const gates = stage.gates.map((g) => ({ ...g, done: false })).sort((a, b) => a.z - b.z)
-  // clean dodges dodgeable blocks (only full-width are mandatory); careless stands in all
+  // only careless stands in dodgeable blocks; everyone else dodges them (full-width are mandatory)
   const blocks = stage.obstacles
-    .filter((o) => (clean ? o.fullWidth : true))
+    .filter((o) => (standInDodgeables ? true : o.fullWidth))
     .map((o) => ({ z: o.z, hp: o.hp, done: false }))
   const enemies = (stage.enemies || []).map((e) => ({
     z: e.z,
@@ -57,7 +71,7 @@ function simulate(stage, startCount, policy) {
         g.done = true
         const l = applyGate(count, g.left, cap)
         const r = applyGate(count, g.right, cap)
-        count = clean ? Math.max(l, r) : Math.min(l, r)
+        count = bestGates ? Math.max(l, r) : Math.min(l, r)
       }
     }
     if (count <= 0) return lose('gate-wipe')
@@ -108,6 +122,7 @@ function simulate(stage, startCount, policy) {
   const runTime = stage.timeLimit - time
 
   // ── BOSS phase ──
+  bossEntryCount = count
   let hp = stage.boss.hp
   let fightTime = 0
   let fireTimer = 0
@@ -117,10 +132,11 @@ function simulate(stage, startCount, policy) {
     const F = count * d
     hp -= F * DT // damage pre-removal (design 6.5)
     fightTime += DT
-    if (hp <= 0) return { win: true, lose: false, contactDrain, endCount: count, runTime, fightTime, time }
+    if (hp <= 0)
+      return { win: true, lose: false, contactDrain, endCount: count, runTime, fightTime, time, bossDrain: bossEntryCount - count }
     time -= DT
-    if (!clean) {
-      // careless eats telegraphed bullets it doesn't dodge
+    if (eatsBullets) {
+      // eats telegraphed bullets it doesn't dodge (careless/sloppy/undodged)
       fireTimer += DT
       if (fireTimer >= stage.boss.fireInterval) {
         fireTimer -= stage.boss.fireInterval
@@ -132,7 +148,7 @@ function simulate(stage, startCount, policy) {
   }
 
   function lose(reason) {
-    return { win: false, lose: true, contactDrain, endCount: count, reason, runTime: stage.timeLimit - time, time }
+    return { win: false, lose: true, contactDrain, endCount: count, reason, runTime: stage.timeLimit - time, time, bossDrain: bossEntryCount - count }
   }
   function fail(reason) {
     return { win: false, lose: true, contactDrain, endCount: count, reason, time }
@@ -142,6 +158,15 @@ function simulate(stage, startCount, policy) {
 function fmt(r) {
   const t = r.win ? `run ${r.runTime.toFixed(1)}s + fight ${r.fightTime.toFixed(1)}s` : `reason=${r.reason}`
   return `win=${r.win} drain=${r.contactDrain} end=${r.endCount} ${t}`
+}
+
+// Closed-form "no 1-second melt" guard: a fully-buffed army AT THE CAP (worst case, fastest
+// melt) folds in dmgCap × rapidMult. NOT a simulate() call — conservatively assumes buffs
+// active 100% of the fight. seconds = boss.hp / (cap · perSoldierDPS · dmgCap · rapidMult).
+function meltSeconds(stage) {
+  const t = stage.powerupTuning
+  const dps = stage.crowdCap * stage.combat.perSoldierDPS * t.dmgCap * t.rapidMult
+  return stage.boss.hp / dps
 }
 
 console.log('— Swarm Run balance check (stepped whole-run sim) —\n')
@@ -169,6 +194,32 @@ console.log('\nCARELESS:')
 console.log(`  stage1: ${fmt(s1w)}`)
 if (s2w) console.log(`  stage2: ${fmt(s2w)}`)
 
+// Sloppy chain (worst gates, competent run, eats boss bullets) — must LOSE
+const s1sl = simulate(STAGE_1, STAGE_1.startCount, 'sloppy')
+let sloppyLoses = s1sl.lose
+let s2sl = null
+if (!s1sl.lose) {
+  s2sl = simulate(STAGE_2, Math.max(s1sl.endCount, STAGE_2.startCount), 'sloppy')
+  sloppyLoses = s2sl.lose
+}
+console.log('\nSLOPPY (worst gates, dodge dodgeables, no power-ups, eats boss bullets):')
+console.log(`  stage1: ${fmt(s1sl)}`)
+if (s2sl) console.log(`  stage2: ${fmt(s2sl)}`)
+
+// Undodged probe (best gates + clean run, but eats EVERY boss bullet) — boss must drain hard.
+// s2 carries the clean army (best-run carry), since undodged s1 may be wiped.
+const s1ud = simulate(STAGE_1, STAGE_1.startCount, 'undodged')
+const s2ud = simulate(STAGE_2, carried, 'undodged')
+console.log('\nUNDODGED (best gates, eats EVERY boss bullet, no power-ups) — boss-lethality anchor:')
+console.log(`  stage1: ${fmt(s1ud)} bossDrain=${s1ud.bossDrain}`)
+console.log(`  stage2: ${fmt(s2ud)} bossDrain=${s2ud.bossDrain}`)
+
+// No-melt closed-form guard
+const melt1 = meltSeconds(STAGE_1)
+const melt2 = meltSeconds(STAGE_2)
+console.log('\nNO-MELT GUARD (buffed cap army, closed form):')
+console.log(`  stage1: ${melt1.toFixed(1)}s   stage2: ${melt2.toFixed(1)}s   (must be > 2.5s)`)
+
 // Time budgets
 const s1Total = (s1c.runTime + s1c.fightTime).toFixed(1)
 const s2Total = (s2carried.runTime + s2carried.fightTime).toFixed(1)
@@ -186,6 +237,13 @@ const checks = [
   ['stage1 clean within timer', s1c.win && s1c.runTime + s1c.fightTime < STAGE_1.timeLimit],
   ['stage2 clean within timer', s2carried.win && s2carried.runTime + s2carried.fightTime < STAGE_2.timeLimit],
   ['careless run loses (skill matters)', carelessLoses],
+  ['sloppy run loses (gate sense + boss dodging matter)', sloppyLoses],
+  ['stage1 clean boss fight > 5s (no instant melt)', s1c.win && s1c.fightTime > 5],
+  ['stage2 clean boss fight > 5s (no instant melt)', s2carried.win && s2carried.fightTime > 5],
+  ['undodged stage1 boss drain > 100 (boss is lethal)', s1ud.bossDrain > 100],
+  ['undodged stage2 boss drain > 120 (boss is lethal)', s2ud.bossDrain > 120],
+  ['no 1s melt: stage1 buffed cap > 2.5s', melt1 > 2.5],
+  ['no 1s melt: stage2 buffed cap > 2.5s', melt2 > 2.5],
 ]
 
 console.log('\nCHECKS:')
