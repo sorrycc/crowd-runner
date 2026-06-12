@@ -1,0 +1,19 @@
+{
+  "name": "crowd-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Count Masters-style crowd runner — Three.js + Vite, primitives only",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "verify": "node scripts/verify-balance.mjs"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}

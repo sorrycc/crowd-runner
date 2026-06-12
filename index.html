@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Crowd Runner</title>
+  <style>
+    :root {
+      --pill-bg: rgba(17, 24, 39, 0.78);
+      --pill-fg: #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1020; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-user-select: none; user-select: none; }
+
+    #app { position: fixed; inset: 0; }
+    #app canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+    /* ---- HUD ---- */
+    #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+    #hud.show { display: block; }
+
+    #progress {
+      position: absolute; top: 10px; left: 12px; right: 12px; height: 16px;
+      background: rgba(0, 0, 0, 0.25); border: 2px solid rgba(255, 255, 255, 0.7);
+      border-radius: 999px; overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #f59e0b, #ef4444);
+      transition: width 0.08s linear;
+    }
+
+    #hud-count {
+      position: absolute; top: 38px; left: 50%; transform: translateX(-50%);
+      background: var(--pill-bg); color: var(--pill-fg);
+      font-weight: 800; font-size: 20px; line-height: 1;
+      padding: 8px 16px; border-radius: 999px; min-width: 56px; text-align: center;
+    }
+
+    #hud-bottom {
+      position: absolute; left: 0; right: 0; bottom: 14px;
+      display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+      padding: 0 12px;
+    }
+    .pill {
+      background: var(--pill-bg); color: var(--pill-fg);
+      font-weight: 700; font-size: 15px; line-height: 1;
+      padding: 8px 14px; border-radius: 999px; white-space: nowrap;
+    }
+    #hud-coins::before { content: "🪙 "; }
+    #hud-combo { color: #fbbf24; }
+    #hud-combo.hidden { display: none; }
+
+    /* ---- Screens ---- */
+    .screen {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center; flex-direction: column; gap: 18px;
+      background: rgba(11, 16, 32, 0.72); backdrop-filter: blur(4px);
+      color: #fff; text-align: center; padding: 24px;
+    }
+    .screen.show { display: flex; }
+    .screen h1 { font-size: clamp(32px, 9vw, 64px); letter-spacing: 1px; }
+    .screen p { font-size: 18px; opacity: 0.9; max-width: 28ch; }
+    .screen .stats { font-size: 20px; font-weight: 700; opacity: 0.95; }
+    .btn {
+      pointer-events: auto; cursor: pointer; border: none;
+      background: linear-gradient(180deg, #22c55e, #16a34a); color: #fff;
+      font-weight: 800; font-size: 22px; letter-spacing: 1px;
+      padding: 16px 44px; border-radius: 999px;
+      box-shadow: 0 8px 0 #15803d, 0 12px 24px rgba(0,0,0,0.35);
+      transition: transform 0.05s ease, box-shadow 0.05s ease;
+    }
+    .btn:active { transform: translateY(4px); box-shadow: 0 4px 0 #15803d, 0 6px 12px rgba(0,0,0,0.35); }
+    .hint { font-size: 14px; opacity: 0.7; max-width: 30ch; }
+    #screen-win h1 { color: #34d399; }
+    #screen-lose h1 { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- In-game HUD overlay -->
+  <div id="hud">
+    <div id="progress"><div id="progress-fill"></div></div>
+    <div id="hud-count">1</div>
+    <div id="hud-bottom">
+      <div id="hud-stage" class="pill">STAGE 1</div>
+      <div id="hud-coins" class="pill">0</div>
+      <div id="hud-combo" class="pill hidden">0 COMBO</div>
+      <div id="hud-timer" class="pill">0:00</div>
+    </div>
+  </div>
+
+  <!-- Start screen -->
+  <div id="screen-start" class="screen show">
+    <h1>CROWD RUNNER</h1>
+    <p>Steer through gates to grow your crowd, smash the obstacles, and crush the boss before time runs out.</p>
+    <button id="btn-start" class="btn">START</button>
+    <div class="hint">Drag / swipe or use ← → (A / D) to steer.</div>
+  </div>
+
+  <!-- Win screen -->
+  <div id="screen-win" class="screen">
+    <h1>YOU WIN!</h1>
+    <div class="stats" id="win-stats"></div>
+    <button id="btn-restart-win" class="btn">RESTART</button>
+  </div>
+
+  <!-- Lose screen -->
+  <div id="screen-lose" class="screen">
+    <h1>GAME OVER</h1>
+    <div class="stats" id="lose-stats"></div>
+    <button id="btn-restart-lose" class="btn">RESTART</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
