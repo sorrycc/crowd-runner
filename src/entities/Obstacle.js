@@ -13,6 +13,8 @@ const TIRE_R = 0.45
 const TIRE_H = 0.32
 const FULL = new THREE.Color(0x22c55e)
 const LOW = new THREE.Color(0xef4444)
+const _white = new THREE.Color(0xffffff)
+const DEATH_TIME = 0.26 // cosmetic crumble flash + scale-pop linger before hide (design 6.6)
 
 export class Obstacle {
   constructor(scene, spec) {
@@ -22,6 +24,7 @@ export class Obstacle {
     this.xRange = spec.xRange
     this.fullWidth = !!spec.fullWidth
     this.broken = false
+    this._dying = 0 // > 0 while the crumble anim plays (design 6.6)
     this._hpShown = -1
 
     this.group = new THREE.Group()
@@ -59,6 +62,19 @@ export class Obstacle {
     return x >= this.xRange[0] && x <= this.xRange[1]
   }
 
+  // Per-frame death anim tick (no-op unless crumbling). Called for every obstacle from
+  // Game's RUN phase; obstacles are static and few (≤ a handful per stage), so this is a
+  // bounded loop that does nothing unless exactly one block is mid-crumble.
+  update(dt) {
+    if (!this._dying) return
+    this._dying = Math.max(0, this._dying - dt)
+    const p = 1 - this._dying / DEATH_TIME // 0 → 1
+    const s = p < 0.3 ? 1 + (p / 0.3) * 0.3 : 1.3 * (1 - (p - 0.3) / 0.7)
+    this.group.scale.setScalar(Math.max(0, s))
+    this.mat.color.copy(this._baseColor).lerp(_white, 1 - p)
+    if (this._dying <= 0) this.group.visible = false
+  }
+
   _refresh() {
     const frac = Math.max(0, this.hp) / this.maxHp
     this.mat.color.copy(LOW).lerp(FULL, frac)
@@ -92,7 +108,9 @@ export class Obstacle {
   }
 
   _break() {
-    this.broken = true
-    this.group.visible = false
+    this.broken = true // gameplay flag flips NOW (targeting/contact unchanged); mesh lingers
+    this._dying = DEATH_TIME
+    this._baseColor = this.mat.color.clone() // snapshot the current (low/red) tint to flash from
+    this.tag.visible = false
   }
 }

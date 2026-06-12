@@ -15,6 +15,7 @@ const COLS = 9
 const SPACING = 0.34
 const MARGIN = 0.45 // keep members this far inside the rail
 const LERP_K = 8
+const POP_DECAY = 9 // per-second multiplicative decay of the reinforce scale-pop
 
 // Exported so Game derives the boss-bullet hit radius from the real formation
 // half-width (DRY — design 6.2). (COLS-1)/2 * SPACING.
@@ -28,6 +29,7 @@ export class Crowd {
     this._removalDebt = 0
     this._plateText = -1
     this._bob = 0
+    this._pop = 0 // transient scale-pop on gain (design 6.4)
 
     const followerGeo = makeSoldierGeometry({ scale: 1 })
 
@@ -88,10 +90,16 @@ export class Crowd {
     }
   }
 
+  // Transient scale punch on the whole crowd when reinforced (cosmetic — design 6.4).
+  pop(strength = 0.35) {
+    this._pop = Math.max(this._pop, strength)
+  }
+
   reset(count) {
     this.setCount(count)
     this.init.fill(false)
     this._bob = 0
+    this._pop = 0
     this._plateText = -1
   }
 
@@ -109,14 +117,24 @@ export class Crowd {
     this._leaderX = leaderX
     this._leaderZ = leaderZ
 
+    // scale-pop: decay toward 0 (baseline scale = 1; the bigger leader look comes from its
+    // geometry baked at 1.25, so do NOT multiply by 1.25 here)
+    if (this._pop > 0) {
+      this._pop *= Math.exp(-POP_DECAY * dt)
+      if (this._pop < 0.001) this._pop = 0
+    }
+    const popScale = 1 + this._pop
+
     // leader (with a little run bob)
     this._bob += dt
     this.leader.position.set(leaderX, Math.sin(this._bob * 12) * 0.05, leaderZ)
+    this.leader.scale.setScalar(popScale)
     this.leader.visible = this.count > 0
 
     const followers = Math.max(0, this.count - 1)
     const maxX = this.limit
     const a = 1 - Math.exp(-LERP_K * dt)
+    this._dummy.scale.setScalar(popScale) // applied to every follower instance below
 
     for (let i = 0; i < followers; i++) {
       const col = i % COLS

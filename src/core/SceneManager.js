@@ -15,6 +15,7 @@ const CAM_BACK = 8
 const LOOK_AHEAD = 7
 const CAM_X_FOLLOW = 0.45 // fraction of leader x the camera tracks
 const CAM_LERP_K = 6
+const SHAKE_DECAY = 6 // per-second multiplicative decay rate (frame-rate independent)
 
 function skyTexture() {
   const c = document.createElement('canvas')
@@ -59,8 +60,16 @@ export class SceneManager {
     dir.position.set(6, 12, -4)
     this.scene.add(dir)
 
+    this._shake = 0
+
     this._onResize = () => this.resize()
     window.addEventListener('resize', this._onResize)
+  }
+
+  // Additive decaying camera shake (design 6.3). Stacks via Math.max so a weaker new
+  // shake never reduces an in-flight one. Light soldier loss ≈ 0.12, heavy boss ≈ 0.6.
+  shake(amount) {
+    this._shake = Math.max(this._shake, amount)
   }
 
   resize() {
@@ -77,6 +86,19 @@ export class SceneManager {
     const desired = new THREE.Vector3(targetX, CAM_HEIGHT, leaderPos.z - CAM_BACK)
     const t = snap ? 1 : 1 - Math.exp(-CAM_LERP_K * dt)
     this.camera.position.lerp(desired, t)
+
+    // additive decaying shake on top of the lerp (snap hard-cuts it — used on start/
+    // restart and after stage advance so a heavy boss shake never bleeds across stages)
+    if (snap) {
+      this._shake = 0
+    } else if (this._shake > 0) {
+      const k = this._shake
+      this.camera.position.x += (Math.random() * 2 - 1) * k
+      this.camera.position.y += (Math.random() * 2 - 1) * k
+      this._shake *= Math.exp(-SHAKE_DECAY * dt)
+      if (this._shake < 0.002) this._shake = 0
+    }
+
     this.camera.lookAt(targetX, 1.2, leaderPos.z + LOOK_AHEAD)
   }
 

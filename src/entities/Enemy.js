@@ -10,6 +10,9 @@ import { makeSoldierGeometry } from '../util/soldier.js'
 // Geometry is per-instance (not a shared singleton) so Track.dispose() on stage
 // rebuild can safely dispose it.
 
+const _white = new THREE.Color(0xffffff)
+const DEATH_TIME = 0.28 // cosmetic death flash + scale-pop linger before hide (design 6.6)
+
 export class Enemy {
   constructor(scene, spec) {
     this.z = spec.z
@@ -18,6 +21,7 @@ export class Enemy {
     this.xRange = spec.xRange
     this.marchSpeed = spec.marchSpeed ?? 0
     this.dead = false
+    this._dying = 0 // > 0 only on a real kill (the silent slip-past leaves this 0)
     this._hpShown = -1
     this._bob = 0
 
@@ -36,6 +40,7 @@ export class Enemy {
       new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.6 }),
       this.maxVisible
     )
+    this._baseColor = this.mesh.material.color.clone()
     this.mesh.frustumCulled = false
     this._dummy = new THREE.Object3D()
     this._x0 = x0
@@ -73,7 +78,19 @@ export class Enemy {
   }
 
   update(dt) {
-    if (this.dead) return
+    // fully dead + hidden (incl. the silent slip-past path in Game): do nothing
+    if (this.dead && this._dying <= 0) return
+    // death anim only (flash + scale-pop), then hide
+    if (this._dying > 0) {
+      this._dying = Math.max(0, this._dying - dt)
+      const p = 1 - this._dying / DEATH_TIME // 0 → 1
+      const s = p < 0.3 ? 1 + (p / 0.3) * 0.3 : 1.3 * (1 - (p - 0.3) / 0.7)
+      this.group.scale.setScalar(Math.max(0, s))
+      this.mesh.material.color.copy(this._baseColor).lerp(_white, 1 - p)
+      if (this._dying <= 0) this.group.visible = false
+      return
+    }
+    // alive
     this._bob += dt
     if (this.marchSpeed) this.z -= this.marchSpeed * dt
     this.group.position.z = this.z
@@ -112,7 +129,8 @@ export class Enemy {
   }
 
   _die() {
-    this.dead = true
-    this.group.visible = false
+    this.dead = true // gameplay flag flips NOW (targeting/contact unchanged); mesh lingers
+    this._dying = DEATH_TIME
+    this.tag.visible = false
   }
 }

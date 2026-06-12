@@ -21,6 +21,7 @@ export class Powerup {
     this.collected = false
 
     const def = TYPES[spec.type] || TYPES.reinforce
+    this.color = def.color // exposed so Game can tint the grab-pop in the power-up's colour
     this.group = new THREE.Group()
     this.group.position.set(spec.x, 0.95, spec.z)
 

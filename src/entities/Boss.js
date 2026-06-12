@@ -9,6 +9,11 @@ import { makeTextSprite, updateTextSprite } from '../util/text.js'
 // shot via bossBullets.spawn() and flashes a muzzle telegraph.
 
 const _flashColor = new THREE.Color(0xfca5a5)
+const _white = new THREE.Color(0xffffff)
+
+// Cosmetic boss-death hold (design 6.5). Game freezes into WIN_SEQUENCE for this long
+// while the multi-stage burst + heavy shake play, then advances / shows the win screen.
+export const BOSS_DEATH_TIME = 1.1
 
 export class Boss {
   constructor(scene, config) {
@@ -21,6 +26,7 @@ export class Boss {
     this._hpShown = -1
     this._fireTimer = 0
     this._flash = 0
+    this._dying = 0 // > 0 while the death sequence plays (design 6.5)
 
     this.group = new THREE.Group()
     this.group.position.set(0, 0, config.boss.z)
@@ -92,6 +98,26 @@ export class Boss {
     }
 
     return fired
+  }
+
+  // ── death sequence (cosmetic — design 6.5) ──
+  // Begins a brief flash + scale-punch-then-collapse; Game drives updateDeath() during the
+  // WIN_SEQUENCE hold. Gameplay (hp<=0) was already decided by Game's win check.
+  playDeath() {
+    this._dying = BOSS_DEATH_TIME
+    this.tag.visible = false
+  }
+
+  updateDeath(dt) {
+    if (this._dying <= 0) return
+    this._dying = Math.max(0, this._dying - dt)
+    const p = 1 - this._dying / BOSS_DEATH_TIME // 0 → 1 progress
+    // scale: quick punch up over the first 20%, then collapse toward 0
+    const s = p < 0.2 ? 1 + (p / 0.2) * 0.4 : 1.4 * (1 - (p - 0.2) / 0.8)
+    this.group.scale.setScalar(Math.max(0, s))
+    // white flash, strongest at the start, fading as it collapses
+    this.bodyMat.color.copy(this._baseColor).lerp(_white, 1 - p)
+    if (this._dying <= 0) this.group.visible = false
   }
 
   _fire(armyX, armyZ, bossBullets) {

@@ -6,6 +6,8 @@ import { Environment } from './world/Environment.js'
 import { Track } from './world/Track.js'
 import { Crowd, FORMATION_HALF_WIDTH } from './entities/Crowd.js'
 import { BulletPool } from './entities/Bullets.js'
+import { Effects } from './effects/Effects.js'
+import { BOSS_DEATH_TIME } from './entities/Boss.js'
 import { HUD } from './ui/HUD.js'
 import { Screens } from './ui/Screens.js'
 
@@ -65,6 +67,10 @@ export class Game {
       length: 0.5,
     })
 
+    // cosmetic effects (floating numbers, particle bursts, camera shake) — pooled,
+    // page-lifetime (like the bullet pools); never disposed, only clear()ed on reset.
+    this.effects = new Effects(this.sm.scene, this.sm)
+
     this.hud = new HUD(audio)
     this.screens = new Screens({
       onStart: () => this.start(),
@@ -78,6 +84,10 @@ export class Game {
     this.prevZ = 0
     this.timeRemaining = this.config.timeLimit
     this.combo = 0
+
+    // boss-death celebration hold (WIN_SEQUENCE) bookkeeping (design 6.8)
+    this._winTimer = 0
+    this._deathWave = 0
 
     // buffs
     this.dmgMult = 1
@@ -127,6 +137,7 @@ export class Game {
     this._resetStageState(Math.max(carried, this.config.startCount))
     this.hud.show(this.config.label)
     this.hud.flashBanner(this.config.label)
+    this.state = 'PLAYING' // re-entered from WIN_SEQUENCE; _resetStageState left phase=RUN
     this.audio?.play('stage-advance') // music keeps looping seamlessly across the advance
   }
 
@@ -141,9 +152,12 @@ export class Game {
     this.shieldLeft = 0
     this._fireAcc = 0
     this._shootSfxAcc = 0
+    this._winTimer = 0
+    this._deathWave = 0
 
     this.playerBullets.clear()
     this.bossBullets.clear()
+    this.effects.clear() // hard-cut in-flight popups/particles (shake resets on the snap below)
 
     this.input.reset()
     this.crowd.reset(count)
@@ -192,6 +206,7 @@ export class Game {
     // 3) ranged combat
     if (this.phase === 'RUN') {
       for (const e of this.track.enemies) e.update(dt)
+      for (const o of this.track.obstacles) o.update(dt) // ticks crumble anim (no-op otherwise)
       for (const p of this.track.powerups) p.update(dt)
 
       const target = this._acquireTarget(leaderX, cfg.combat.fireRange)
@@ -202,8 +217,13 @@ export class Game {
         // death edge: target is an Obstacle (.broken) or an Enemy (.dead) — mutually
         // exclusive props, so the absent one reads falsy. enemy-down fires only from this
         // focus-fire kill, never the slip-past path in _resolveCrossings.
-        if (target.broken) this.audio?.play('block-break')
-        else if (target.dead) this.audio?.play('enemy-down')
+        if (target.broken) {
+          this.audio?.play('block-break')
+          this.effects.blockBreak(aimX, 0.6, target.z) // debris burst (flash is on the block)
+        } else if (target.dead) {
+          this.audio?.play('enemy-down')
+          this.effects.enemyDeath(aimX, 0.8, target.z)
+        }
       }
       this._resolveCrossings(leaderX, shielded)
     } else {
@@ -219,16 +239,13 @@ export class Game {
     this.bossBullets.update(dt)
     this.crowd.update(dt, leaderX, this.leaderZ)
 
-    // 5) win check (before lose — design 6.5)
+    // 5) win check (before lose — design 6.5/6.8)
     if (this.track.boss.hp <= 0 && this.timeRemaining > 0) {
-      // boss-down fires exactly once: WIN → state leaves PLAYING next frame; advance →
-      // track.reset restores full boss hp so this branch is false next frame.
+      // boss-down fires exactly once: _beginBossDeath switches state out of PLAYING, so
+      // _update early-returns and never re-enters this branch (no lose transition either).
       this.audio?.play('boss-down')
-      if (this.stageIndex < this.stages.length - 1) {
-        this._advanceStage()
-        return
-      }
-      return this._end('WIN')
+      this._beginBossDeath()
+      return
     }
     // 6) lose check
     if (this.timeRemaining <= 0 || this.crowd.count <= 0) return this._end('LOSE')
@@ -285,9 +302,21 @@ export class Game {
 
     for (const g of this.track.gates) {
       if (!g.done && g.z > a && g.z <= b) {
+        const before = this.crowd.count
         const { good } = g.apply(this.crowd, leaderX)
+        const delta = this.crowd.count - before
         this.combo = good ? this.combo + 1 : 0
         this.audio?.play(good ? 'gate-good' : 'gate-bad')
+        // juice: floating +N/−N (skip a no-op gate at cap), gate-pick puff, then gain
+        // pop / loss shards. No shake — a gate choice isn't a hit.
+        if (delta !== 0) this.effects.number(delta, leaderX, 1.8, this.leaderZ)
+        this.effects.gatePick(leaderX, 1.8, g.z, good)
+        if (delta > 0) {
+          this.effects.gainPuff(leaderX, 0.8, this.leaderZ)
+          this.crowd.pop()
+        } else if (delta < 0) {
+          this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+        }
       }
     }
     // blocks: reached with hp left while engaged → leftover drains (unless shielded)
@@ -298,7 +327,11 @@ export class Game {
           if (drained > 0) {
             this.combo = 0
             this.audio?.play('hurt')
+            this.effects.number(-drained, leaderX, 1.8, this.leaderZ)
+            this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+            this.sm.shake(0.12)
           }
+          if (o.broken) this.effects.blockBreak((o.xRange[0] + o.xRange[1]) / 2, 0.6, o.z)
         }
       }
     }
@@ -310,10 +343,14 @@ export class Game {
           if (drained > 0) {
             this.combo = 0
             this.audio?.play('hurt')
+            this.effects.number(-drained, leaderX, 1.8, this.leaderZ)
+            this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+            this.sm.shake(0.12)
           }
+          if (e.dead) this.effects.enemyDeath((e.xRange[0] + e.xRange[1]) / 2, 0.8, e.z)
         } else {
           e.dead = true
-          e.group.visible = false // dodged / slipped past — no loss (silent)
+          e.group.visible = false // dodged / slipped past — no loss (silent, no _dying)
         }
       }
     }
@@ -321,6 +358,7 @@ export class Game {
     for (const p of this.track.powerups) {
       if (!p.collected && p.z > a && p.z <= b && Math.abs(leaderX - p.x) < PICK_RADIUS) {
         p.collect()
+        this.effects.powerupGrab(p.x, 0.95, p.z, p.color) // distinct grab pop in its colour
         this._applyPowerup(p.type)
       }
     }
@@ -332,9 +370,16 @@ export class Game {
       if (z <= this.leaderZ + 0.4) {
         if (Math.abs(x - leaderX) < HIT_RADIUS) {
           if (!shielded) {
+            const before = this.crowd.count
             this.crowd.removeBurst(burst)
+            const lost = before - this.crowd.count
             this.combo = 0
             this.audio?.play('hurt') // multi-bullet frames collapse to one hit via guard
+            if (lost > 0) {
+              this.effects.number(-lost, leaderX, 1.8, this.leaderZ)
+              this.effects.lossShards(leaderX, 0.8, this.leaderZ)
+              this.sm.shake(0.12) // light shake on soldier loss
+            }
           }
         }
         this.bossBullets.deactivate(i) // hit, absorbed, or passed
@@ -346,9 +391,52 @@ export class Game {
     this.audio?.play('powerup')
     const t = this.config.powerupTuning
     if (type === 'rapid') this.rapidLeft = t.rapidDuration
-    else if (type === 'reinforce') this.crowd.add(t.reinforce)
-    else if (type === 'shield') this.shieldLeft = t.shieldDuration
+    else if (type === 'reinforce') {
+      const before = this.crowd.count
+      this.crowd.add(t.reinforce)
+      const delta = this.crowd.count - before // clamped at cap → may be 0
+      if (delta > 0) {
+        this.effects.number(delta, this.leaderPos.x, 1.8, this.leaderZ)
+        this.effects.gainPuff(this.leaderPos.x, 0.8, this.leaderZ)
+        this.crowd.pop()
+      }
+    } else if (type === 'shield') this.shieldLeft = t.shieldDuration
     else if (type === 'damage') this.dmgMult = Math.min(t.dmgCap, this.dmgMult + t.dmgBoostStep)
+  }
+
+  // Boss-death celebration hold (design 6.8). The boss is already dead (win check decided
+  // it); we freeze out of PLAYING for BOSS_DEATH_TIME and play a multi-stage burst + heavy
+  // shake before advancing / showing the win screen. Cosmetic-only timing.
+  _beginBossDeath() {
+    this.state = 'WIN_SEQUENCE'
+    this._winTimer = BOSS_DEATH_TIME
+    this._deathWave = 0
+    this.track.boss.playDeath()
+    this.effects.bossDeathWave(0, 2.5, this.config.boss.z, 0) // first, largest wave
+    this.sm.shake(0.6) // heavy
+  }
+
+  _tickWinSequence(dt) {
+    this._winTimer -= dt
+    this.track.boss.updateDeath(dt)
+    const elapsed = BOSS_DEATH_TIME - this._winTimer
+    const bz = this.config.boss.z
+    // two staggered follow-up waves (the "multi-stage" burst)
+    if (this._deathWave < 1 && elapsed >= 0.32) {
+      this._deathWave = 1
+      this.effects.bossDeathWave(0, 3.0, bz, 1)
+      this.sm.shake(0.35)
+    } else if (this._deathWave < 2 && elapsed >= 0.64) {
+      this._deathWave = 2
+      this.effects.bossDeathWave(0, 2.0, bz, 2)
+      this.sm.shake(0.25)
+    }
+    if (this._winTimer <= 0) {
+      // resume the original win-check outcome (advance restores state=PLAYING + snaps the
+      // camera, which zeroes the shake → hard-cut across the stage boundary)
+      if (this.stageIndex < this.stages.length - 1) this._advanceStage()
+      else this._end('WIN')
+    }
   }
 
   _end(result) {
@@ -378,6 +466,8 @@ export class Game {
     const dt = Math.min((now - this._last) / 1000, MAX_DT)
     this._last = now
     this._update(dt)
+    this.effects.update(dt) // animate particles/popups every frame (incl. WIN_SEQUENCE/end)
+    if (this.state === 'WIN_SEQUENCE') this._tickWinSequence(dt)
     this.sm.chase(this.leaderPos, dt) // keep trailing on menu/end screens too
     this.sm.render()
     requestAnimationFrame(this._loop)
