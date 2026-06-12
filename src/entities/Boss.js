@@ -136,8 +136,7 @@ export class Boss {
 
     this.tag = makeTextSprite(formatCount(this.hp), {
       scale: 2.2,
-      accent: '#ef4444',
-      bg: 'rgba(17,24,39,0.95)',
+      border: '#E52521', // NES mario-red boss plate (autoshrink handles long HP)
     })
     this.tag.position.set(0, 6.0, 0)
     this.group.add(this.tag)

@@ -6,11 +6,12 @@ import { makeTextSprite } from '../util/text.js'
 // distinct primitive + colour + letter so it reads at a glance. Collected by
 // steering within PICK_RADIUS (handled in Game); the effect is applied there.
 
+// Colors snapped to NES hues, kept distinct per type (Decision 10).
 const TYPES = {
-  rapid: { color: 0xf97316, letter: 'R', geo: () => new THREE.ConeGeometry(0.34, 0.7, 16) },
-  reinforce: { color: 0x22c55e, letter: '+', geo: () => new THREE.BoxGeometry(0.5, 0.5, 0.5) },
-  shield: { color: 0x38bdf8, letter: 'S', geo: () => new THREE.SphereGeometry(0.36, 16, 12) },
-  damage: { color: 0xef4444, letter: 'D', geo: () => new THREE.OctahedronGeometry(0.42) },
+  rapid: { color: 0xf87800, letter: 'R', geo: () => new THREE.ConeGeometry(0.34, 0.7, 16) },
+  reinforce: { color: 0x00a800, letter: '+', geo: () => new THREE.BoxGeometry(0.5, 0.5, 0.5) },
+  shield: { color: 0x3cbcfc, letter: 'S', geo: () => new THREE.SphereGeometry(0.36, 16, 12) },
+  damage: { color: 0xe52521, letter: 'D', geo: () => new THREE.OctahedronGeometry(0.42) },
 }
 
 export class Powerup {
@@ -39,9 +40,8 @@ export class Powerup {
 
     const tag = makeTextSprite(def.letter, {
       scale: 0.9,
-      accent: null,
-      bg: 'rgba(17,24,39,0.9)',
-      font: 'bold 80px system-ui, sans-serif',
+      border: '#' + def.color.toString(16).padStart(6, '0'), // hard border in the type's NES color
+      color: '#FCFCFC',
     })
     tag.position.set(0, 1.0, 0)
     this.group.add(tag)

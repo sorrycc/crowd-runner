@@ -17,25 +17,26 @@ export class Road {
     // road surface
     const road = new THREE.Mesh(
       new THREE.PlaneGeometry(half * 2, len),
-      new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({ color: 0xe0a864, roughness: 0.95 }) // NES tan path
     )
     road.rotation.x = -Math.PI / 2
     road.position.set(0, 0, len / 2)
     this.group.add(road)
 
-    // solid edge lines
-    const edgeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })
+    // solid edge lines (flat NES paper-white)
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0xfcfcfc, roughness: 0.6 })
     for (const sx of [-1, 1]) {
       const edge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, len), edgeMat)
       edge.position.set(sx * (half - 0.12), 0.02, len / 2)
       this.group.add(edge)
     }
 
-    // dashed centre line (one InstancedMesh)
+    // dashed centre line (one InstancedMesh) — coin-gold road dashes
+    const dashMat = new THREE.MeshStandardMaterial({ color: 0xfbd000, roughness: 0.6 })
     const dashCount = Math.floor(len / (DASH_LEN + DASH_GAP))
     const dashes = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.16, 0.02, DASH_LEN),
-      edgeMat,
+      dashMat,
       dashCount
     )
     const m = new THREE.Object3D()
@@ -47,8 +48,8 @@ export class Road {
     this.group.add(dashes)
 
     // guardrails: a continuous rail + evenly spaced posts on each shoulder
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xf3f4f6, roughness: 0.5 })
-    const postMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.6 })
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xfcfcfc, roughness: 0.5 }) // flat paper-white rail
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xc84c0c, roughness: 0.6 }) // NES brick posts
     const postCount = Math.floor(len / POST_GAP)
     for (const sx of [-1, 1]) {
       const railX = sx * (half + 0.18)

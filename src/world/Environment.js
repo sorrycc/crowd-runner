@@ -13,7 +13,7 @@ export class Environment {
     // ground
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(400, trackLength + 200),
-      new THREE.MeshStandardMaterial({ color: 0x6cbf53, roughness: 1 })
+      new THREE.MeshStandardMaterial({ color: 0x00a800, roughness: 1 }) // NES pipe-green ground
     )
     ground.rotation.x = -Math.PI / 2
     ground.position.set(0, -0.06, trackLength / 2)
@@ -22,9 +22,9 @@ export class Environment {
     // trees
     const n = config.trees | 0
     const trunkGeo = new THREE.CylinderGeometry(0.16, 0.22, 1.1, 6)
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 1 })
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0xc84c0c, roughness: 1 }) // NES brick
     const foliageGeo = new THREE.ConeGeometry(1.0, 2.2, 7)
-    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x3f9d4f, roughness: 1 })
+    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x00a800, roughness: 1 }) // NES pipe-green
 
     const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, n)
     const foliage = new THREE.InstancedMesh(foliageGeo, foliageMat, n)

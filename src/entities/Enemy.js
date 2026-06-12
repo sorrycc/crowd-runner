@@ -39,7 +39,7 @@ export class Enemy {
 
     this.mesh = new THREE.InstancedMesh(
       soldierGeo,
-      makeSoldierMaterial(0xdc2626, SOLDIER_ANIM.enemy),
+      makeSoldierMaterial(0xe52521, SOLDIER_ANIM.enemy), // NES mario-red enemy
       this.maxVisible
     )
     this._baseColor = this.mesh.material.color.clone()
@@ -51,8 +51,7 @@ export class Enemy {
 
     this.tag = makeTextSprite(formatCount(Math.ceil(this.hp)), {
       scale: 1.4,
-      accent: '#fecaca',
-      bg: 'rgba(127,29,29,0.95)',
+      border: '#E52521',
     })
     this.tag.position.set((x0 + x1) / 2, 1.7, 0)
     this.group.add(this.tag)

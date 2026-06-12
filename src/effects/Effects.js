@@ -10,8 +10,8 @@ import { ParticlePool } from './ParticlePool.js'
 // InstancedMesh and the text sprites are added to the scene once and only ever have their
 // state reset — never removed/re-added.
 
-const GREEN = '#4ade80'
-const RED = '#f87171'
+const GREEN = '#00A800' // NES pipe-green
+const RED = '#E52521' // NES mario-red
 const TEXT_CAP = 16
 const TEXT_RISE = 1.9 // world units / s
 const TEXT_LIFE = 0.85
@@ -26,10 +26,8 @@ export class Effects {
     this.texts = []
     for (let i = 0; i < TEXT_CAP; i++) {
       const sprite = makeTextSprite('', {
-        accent: null,
-        bg: 'rgba(0,0,0,0)',
+        plate: false, // plate-less rising number; hard black outline drawn in updateTextSprite
         color: GREEN,
-        font: 'bold 90px system-ui, sans-serif',
         scale: 1.8,
       })
       sprite.visible = false
@@ -57,19 +55,19 @@ export class Effects {
 
   // ── particle bursts (tuned per event) ──
   gainPuff(x, y, z) {
-    this.particles.burst(x, y, z, { count: 16, color: 0x4ade80, speed: 5, up: 0.9, size: 0.16, life: 0.5 })
+    this.particles.burst(x, y, z, { count: 16, color: 0x00a800, speed: 5, up: 0.9, size: 0.16, life: 0.5 })
   }
   lossShards(x, y, z) {
-    this.particles.burst(x, y, z, { count: 18, color: 0xef4444, speed: 8, up: 0.4, size: 0.14, life: 0.45 })
+    this.particles.burst(x, y, z, { count: 18, color: 0xe52521, speed: 8, up: 0.4, size: 0.14, life: 0.45 })
   }
   gatePick(x, y, z, good) {
-    this.particles.burst(x, y, z, { count: 10, color: good ? 0x4ade80 : 0xef4444, speed: 4, up: 0.7, size: 0.18, life: 0.45 })
+    this.particles.burst(x, y, z, { count: 10, color: good ? 0x00a800 : 0xe52521, speed: 4, up: 0.7, size: 0.18, life: 0.45 })
   }
   blockBreak(x, y, z) {
     this.particles.burst(x, y, z, { count: 22, color: 0x9ca3af, speed: 6, up: 0.5, size: 0.2, life: 0.6 })
   }
   enemyDeath(x, y, z) {
-    this.particles.burst(x, y, z, { count: 20, color: 0xdc2626, speed: 7, up: 0.6, size: 0.16, life: 0.55 })
+    this.particles.burst(x, y, z, { count: 20, color: 0xe52521, speed: 7, up: 0.6, size: 0.16, life: 0.55 })
   }
   powerupGrab(x, y, z, color) {
     this.particles.burst(x, y, z, { count: 16, color, speed: 6, up: 1.0, size: 0.17, life: 0.5 })

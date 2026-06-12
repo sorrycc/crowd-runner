@@ -85,10 +85,10 @@ export class HUD {
 
     if (s.phase === 'BOSS') {
       this.fill.style.width = clampPct(s.bossHpFrac * 100) + '%'
-      this.fill.style.background = 'linear-gradient(90deg, #f87171, #ef4444)'
+      this.fill.style.background = '#E52521' // flat NES mario-red
     } else {
       this.fill.style.width = clampPct(s.runProgress * 100) + '%'
-      this.fill.style.background = 'linear-gradient(90deg, #f59e0b, #ef4444)'
+      this.fill.style.background = '#FBD000' // flat NES coin-gold
     }
   }
 

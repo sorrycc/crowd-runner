@@ -13,7 +13,7 @@ function label(op) {
 }
 
 function panelColor(op) {
-  return op[0] === 'sub' ? 0xef4444 : 0x22c55e
+  return op[0] === 'sub' ? 0xe52521 : 0x00a800 // NES mario-red (bad) / pipe-green (good)
 }
 
 export class Gate {
@@ -45,9 +45,8 @@ export class Gate {
 
       const tag = makeTextSprite(label(op), {
         scale: 1.7,
-        accent: null,
-        bg: op[0] === 'sub' ? 'rgba(185,28,28,0.95)' : 'rgba(21,128,61,0.95)',
-        font: 'bold 78px system-ui, sans-serif',
+        border: op[0] === 'sub' ? '#E52521' : '#00A800', // per-entity color on the hard border
+        color: '#FCFCFC',
       })
       tag.position.set(sign * (roadHalf / 2), 2.75, 0)
       this.group.add(tag)

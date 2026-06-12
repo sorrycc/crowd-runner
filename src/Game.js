@@ -9,6 +9,7 @@ import { BulletPool } from './entities/Bullets.js'
 import { Effects } from './effects/Effects.js'
 import { BOSS_DEATH_TIME } from './entities/Boss.js'
 import { soldierModelReady } from './util/models.js'
+import { fontReady } from './util/text.js'
 import { tickSoldiers } from './util/soldier.js'
 import { HUD } from './ui/HUD.js'
 import { Screens } from './ui/Screens.js'
@@ -71,7 +72,7 @@ export class Game {
     // bullet pools
     this.playerBullets = new BulletPool(this.sm.scene, {
       cap: 140,
-      color: 0xfde047,
+      color: 0xfbd000, // NES coin-gold
       radius: 0.06,
       length: 0.6,
     })
@@ -80,7 +81,7 @@ export class Game {
     // live bullets — 64 leaves comfortable margin (design 6.3).
     this.bossBullets = new BulletPool(this.sm.scene, {
       cap: 64,
-      color: 0xf43f5e,
+      color: 0xe52521, // NES mario-red
       radius: 0.22,
       length: 0.5,
     })
@@ -128,8 +129,10 @@ export class Game {
     this._bulletTick = 0
     this._shootSfxAcc = 0
 
-    // Build Crowd + Track once the shared soldier geometry is ready, then drain a queued Start.
-    soldierModelReady.then((soldierGeo) => {
+    // Build Crowd + Track once the shared soldier geometry AND the pixel webfont are ready
+    // (the font gate ensures in-world plates first-draw in Press Start 2P, not the fallback),
+    // then drain a queued Start.
+    Promise.all([soldierModelReady, fontReady]).then(([soldierGeo]) => {
       this.crowd = new Crowd(this.sm.scene, this.config, soldierGeo)
       this.track = new Track(this.sm.scene, this.config, soldierGeo)
       this._ready = true

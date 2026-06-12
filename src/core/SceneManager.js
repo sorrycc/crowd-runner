@@ -5,9 +5,11 @@ import * as THREE from 'three'
 // leader (lower Z) and above, looking toward +Z. Fog fades distant entities into
 // the sky for the vanishing-point look.
 
-const SKY_TOP = '#7ec8f0'
-const SKY_BOTTOM = '#dff1fb'
-const FOG_COLOR = 0xdff1fb
+// Flat NES sky: a single solid #5C94FC band (no gradient), with fog matching exactly so
+// distant entities fade uniformly into the sky rather than into a lighter horizon.
+const SKY_TOP = '#5C94FC'
+const SKY_BOTTOM = '#5C94FC'
+const FOG_COLOR = 0x5c94fc
 
 // Engine-feel camera constants (code-side, out of AC16 scope — design 6.7).
 const CAM_HEIGHT = 5.2
@@ -53,10 +55,12 @@ export class SceneManager {
     this.camera.position.set(0, CAM_HEIGHT, -CAM_BACK)
     this.camera.lookAt(0, 1.2, LOOK_AHEAD)
 
-    // lighting — soft hemisphere fill + a key directional (no shadow maps, perf)
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x4a7a3a, 1.05)
+    // lighting — flat NES look: near-uniform hemisphere fill + a weak directional so
+    // MeshStandard materials read as flat color blocks (NES has no soft shading). No
+    // shadow maps. (Restyle: hemi kept high, directional dropped 0.9 -> 0.25.)
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xbfbfbf, 1.0)
     this.scene.add(hemi)
-    const dir = new THREE.DirectionalLight(0xffffff, 0.9)
+    const dir = new THREE.DirectionalLight(0xffffff, 0.25)
     dir.position.set(6, 12, -4)
     this.scene.add(dir)
 

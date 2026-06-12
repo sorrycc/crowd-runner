@@ -11,8 +11,8 @@ import { makeTextSprite, updateTextSprite, formatCount } from '../util/text.js'
 
 const TIRE_R = 0.45
 const TIRE_H = 0.32
-const FULL = new THREE.Color(0x22c55e)
-const LOW = new THREE.Color(0xef4444)
+const FULL = new THREE.Color(0x00a800) // NES pipe-green (healthy)
+const LOW = new THREE.Color(0xe52521) // NES mario-red (near-dead)
 const _white = new THREE.Color(0xffffff)
 const DEATH_TIME = 0.26 // cosmetic crumble flash + scale-pop linger before hide (design 6.6)
 
@@ -48,8 +48,7 @@ export class Obstacle {
 
     this.tag = makeTextSprite(formatCount(Math.ceil(this.hp)), {
       scale: 1.5,
-      accent: '#ffffff',
-      bg: 'rgba(17,24,39,0.95)',
+      border: '#FCFCFC',
     })
     this.tag.position.set((x0 + x1) / 2, 1.55, 0)
     this.group.add(this.tag)

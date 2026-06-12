@@ -39,13 +39,13 @@ export class Crowd {
     this._pop = 0 // transient scale-pop on gain (design 6.4)
 
     // leader (separate single mesh, larger, orange, punchier run animation → distinct)
-    this.leader = new THREE.Mesh(soldierGeo, makeSoldierMaterial(0xf97316, SOLDIER_ANIM.leader))
+    this.leader = new THREE.Mesh(soldierGeo, makeSoldierMaterial(0xf87800, SOLDIER_ANIM.leader)) // NES orange leader
     scene.add(this.leader)
 
     // followers (instanced, green) — sized to the VISUAL ceiling, not the logical cap
     this.mesh = new THREE.InstancedMesh(
       soldierGeo,
-      makeSoldierMaterial(0x22c55e, SOLDIER_ANIM.follower),
+      makeSoldierMaterial(0x00a800, SOLDIER_ANIM.follower), // NES pipe-green followers
       VISUAL_CAP
     )
     this.mesh.count = 0
@@ -58,7 +58,7 @@ export class Crowd {
     this._dummy = new THREE.Object3D()
 
     // floating count plate (hidden until the run starts)
-    this.plate = makeTextSprite('0', { scale: 2.4, accent: '#22c55e' })
+    this.plate = makeTextSprite('0', { scale: 2.4, border: '#FBD000', color: '#FBD000' }) // coin-gold count
     this.plate.visible = false
     scene.add(this.plate)
 
