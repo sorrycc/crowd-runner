@@ -120,6 +120,12 @@
       box-shadow: 0 8px 0 #7f1d1d, 0 12px 24px rgba(0,0,0,0.35);
     }
     .btn-hard:active { box-shadow: 0 4px 0 #7f1d1d, 0 6px 12px rgba(0,0,0,0.35); }
+    .btn-ghost {
+      background: linear-gradient(180deg, #475569, #334155);
+      box-shadow: 0 8px 0 #1e293b, 0 12px 24px rgba(0,0,0,0.35);
+      font-size: 18px; padding: 14px 32px;
+    }
+    .btn-ghost:active { box-shadow: 0 4px 0 #1e293b, 0 6px 12px rgba(0,0,0,0.35); }
 
     .hint { font-size: 14px; opacity: 0.7; max-width: 30ch; }
     #screen-win h1 { color: #34d399; }
@@ -150,7 +156,7 @@
   <!-- Start screen -->
   <div id="screen-start" class="screen show">
     <h1>SWARM RUN</h1>
-    <p>Steer through gates to grow your squad of gunners. They auto-fire — more soldiers, more firepower. Track your count to pick the better gate, shoot down barricades and enemy squads, dodge the boss's fan of shots, and crush all three bosses before time runs out.</p>
+    <p>Steer through gates to grow your swarm of gunners — there's no soldier limit now. They auto-fire: more soldiers, more firepower, but tougher bosses to match. Track your count to pick the better gate, shoot down barricades and squads, ride out random events, and beat the FINAL BOSS at stage 5 — then go endless.</p>
     <div class="tier-row">
       <button id="btn-start-normal" class="btn">NORMAL</button>
       <button id="btn-start-hard" class="btn btn-hard">HARD</button>
@@ -158,17 +164,22 @@
     <div class="hint">Normal is a fair fight. Hard tightens the clock and the boss bites harder. Drag / swipe or ← → (A / D) to steer.</div>
   </div>
 
-  <!-- Win screen -->
+  <!-- Win screen (stage-5 climax) -->
   <div id="screen-win" class="screen">
     <h1>YOU WIN!</h1>
+    <p>You crushed the FINAL BOSS. The endless gauntlet awaits — stages keep coming, threats keep scaling. How deep can your swarm go?</p>
     <div class="stats" id="win-stats"></div>
-    <button id="btn-restart-win" class="btn">RESTART</button>
+    <div class="tier-row">
+      <button id="btn-continue-endless" class="btn">CONTINUE — ENDLESS</button>
+      <button id="btn-restart-win" class="btn btn-ghost">RESTART</button>
+    </div>
   </div>
 
   <!-- Lose screen -->
   <div id="screen-lose" class="screen">
     <h1>GAME OVER</h1>
     <div class="stats" id="lose-stats"></div>
+    <div class="stats" id="lose-best" style="font-size:16px;opacity:0.8;"></div>
     <button id="btn-restart-lose" class="btn">RESTART</button>
   </div>
 

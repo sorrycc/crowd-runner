@@ -1,14 +1,11 @@
-import STAGE_1 from './config/stage1.js'
-import STAGE_2 from './config/stage2.js'
-import STAGE_3 from './config/stage3.js'
 import { Game } from './Game.js'
 import { AudioManager } from './core/Audio.js'
 
-// Stage list import site (design 6.9, AC11): adding/reordering stages is a one-line
-// change here — the engine never imports a specific stage file. Stages auto-advance;
-// clearing the final stage's boss wins.
+// Single procedural code path (redesign 2026-06-12-endless-procedural): there are no hand-authored
+// stage files anymore — Game generates every stage on demand via src/config/generator.js. The run
+// is a finite 5-stage climax that unlocks an endless mode (stages 6+ rising until you lose).
 //
-// AudioManager is injected into the Game (constructor DI). It only fetches raw audio
-// ArrayBuffers now; no AudioContext exists until the Start gesture calls unlock() (AC6).
+// AudioManager is injected into the Game (constructor DI). It only fetches raw audio ArrayBuffers
+// now; no AudioContext exists until the Start gesture calls unlock().
 const audio = new AudioManager()
-new Game([STAGE_1, STAGE_2, STAGE_3], audio)
+new Game(audio)

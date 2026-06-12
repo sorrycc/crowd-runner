@@ -1,23 +1,25 @@
 import * as THREE from 'three'
-import { makeTextSprite, updateTextSprite } from '../util/text.js'
+import { makeTextSprite, updateTextSprite, formatCount } from '../util/text.js'
 import { makeSoldierMaterial, SOLDIER_ANIM } from '../util/soldier.js'
 
 const LEADER_SCALE = 1.25 // baked-at-1.25 look is gone; applied via leader.scale now
 
-// The army (design 6.3). `count` is the integer source of truth in [0, cap]. The
-// leader is a separate orange soldier; followers (= count-1) are one InstancedMesh
-// (one draw call) of green soldiers packed in a centred rectangular block behind the
-// leader, lerping toward their slots and re-packing as the count changes.
+// The army (redesign 2026-06-12-endless-procedural, design §6.4). The 200 cap is GONE: `count`
+// is an UNBOUNDED integer (sanity-clamped only to config.crowdCap = MAX_COUNT). Rendering is a
+// VISUAL cap: the follower InstancedMesh and every per-instance array are sized to VISUAL_CAP, and
+// at most VISUAL_CAP followers ever draw. This is a deliberate VISUAL cap, NOT a truncation — the
+// HUD/count plate keep showing the true logical count past the ceiling (tens of thousands of
+// humanoids would tank FPS; a true unbounded GPU buffer is impossible).
 //
-// Count mutations: gates use integer add/mul/sub; the boss drain (now via bullets)
-// and contact drains use sub()/removeBurst(); removeContinuous() keeps the
-// fractional accumulator for any per-frame removal.
+// CRITICAL: VISUAL_CAP — never config.crowdCap (=1e12) — bounds every loop/array here. Using the
+// 1e12 sanity clamp as a loop/array bound would allocate/iterate a trillion slots and freeze.
 
 const COLS = 9
 const SPACING = 0.34
 const MARGIN = 0.45 // keep members this far inside the rail
 const LERP_K = 8
 const POP_DECAY = 9 // per-second multiplicative decay of the reinforce scale-pop
+const VISUAL_CAP = 1500 // max follower instances rendered (the visual ceiling)
 
 // Exported so Game derives the boss-bullet hit radius from the real formation
 // half-width (DRY — design 6.2). (COLS-1)/2 * SPACING.
@@ -29,7 +31,7 @@ export class Crowd {
   // The march/run motion is a GPU limb swing in the soldier material (per-instance phase via
   // gl_InstanceID); no per-frame CPU animation beyond the existing position lerp.
   constructor(scene, config, soldierGeo) {
-    this.cap = config.crowdCap
+    this.cap = config.crowdCap // sanity clamp only (= MAX_COUNT); NEVER a loop/array bound
     this.limit = config.roadHalf - MARGIN
     this.count = 0
     this._removalDebt = 0
@@ -40,19 +42,19 @@ export class Crowd {
     this.leader = new THREE.Mesh(soldierGeo, makeSoldierMaterial(0xf97316, SOLDIER_ANIM.leader))
     scene.add(this.leader)
 
-    // followers (instanced, green) — share the same geometry as the leader/enemies
+    // followers (instanced, green) — sized to the VISUAL ceiling, not the logical cap
     this.mesh = new THREE.InstancedMesh(
       soldierGeo,
       makeSoldierMaterial(0x22c55e, SOLDIER_ANIM.follower),
-      this.cap
+      VISUAL_CAP
     )
     this.mesh.count = 0
     this.mesh.frustumCulled = false
     scene.add(this.mesh)
 
-    // per-instance lerped positions + "has spawned" flags
-    this.cur = Array.from({ length: this.cap }, () => new THREE.Vector3())
-    this.init = new Array(this.cap).fill(false)
+    // per-instance lerped positions + "has spawned" flags (sized to the VISUAL ceiling)
+    this.cur = Array.from({ length: VISUAL_CAP }, () => new THREE.Vector3())
+    this.init = new Array(VISUAL_CAP).fill(false)
     this._dummy = new THREE.Object3D()
 
     // floating count plate (hidden until the run starts)
@@ -131,12 +133,14 @@ export class Crowd {
     this.leader.scale.setScalar(LEADER_SCALE * popScale)
     this.leader.visible = this.count > 0
 
+    // Logical followers can be millions; only VISUAL_CAP ever render (the visual ceiling).
     const followers = Math.max(0, this.count - 1)
+    const rendered = Math.min(followers, VISUAL_CAP)
     const maxX = this.limit
     const a = 1 - Math.exp(-LERP_K * dt)
     this._dummy.scale.setScalar(popScale) // applied to every follower instance below
 
-    for (let i = 0; i < followers; i++) {
+    for (let i = 0; i < rendered; i++) {
       const col = i % COLS
       const row = (i / COLS) | 0
       let tx = leaderX + (col - (COLS - 1) / 2) * SPACING
@@ -159,16 +163,19 @@ export class Crowd {
       this._dummy.updateMatrix()
       this.mesh.setMatrixAt(i, this._dummy.matrix)
     }
-    // de-activated slots respawn at the leader if regained later
-    for (let i = followers; i < this.cap; i++) this.init[i] = false
-    this.mesh.count = followers
+    // de-activated slots respawn at the leader if regained later — bound by VISUAL_CAP, NEVER
+    // this.cap (=1e12), which would iterate a trillion times and freeze the frame loop.
+    for (let i = rendered; i < VISUAL_CAP; i++) this.init[i] = false
+    this.mesh.count = rendered
     this.mesh.instanceMatrix.needsUpdate = true
 
-    // count plate floats above the leader; texture only redrawn when count changes
+    // count plate floats above the leader; texture only redrawn when the count changes. The plate
+    // shows the COMPACT count (12.3k) so a 7-digit army never clips the sprite; the DOM HUD shows
+    // the full integer (no truncation — design §6.4/AC8).
     this.plate.position.set(leaderX, 2.3, leaderZ - 0.2)
     this.plate.visible = this.count > 0
     if (this._plateText !== this.count) {
-      updateTextSprite(this.plate, this.count)
+      updateTextSprite(this.plate, formatCount(this.count))
       this._plateText = this.count
     }
   }

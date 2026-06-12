@@ -1,306 +1,249 @@
-// Headless balance check — a stepped whole-run simulation that mirrors Game.js combat
-// (fixed dt = 1/60), chained across all 3 stages, for BOTH difficulty tiers (Normal + Hard).
-// It is the balance CONTRACT, not a bit-exact browser replay (the browser uses variable dt);
-// a clean run must clear with margin to absorb dt variance. Run: node scripts/verify-balance.mjs
+// ── Statistical balance verifier (redesign 2026-06-12-endless-procedural, design §6.8) ──
+// The deterministic single-solution replay is gone: with procedural layouts + seeded random
+// events, balance can only be a STATISTICAL contract. This sweeps N seeds × first K depths × both
+// tiers × good/bad policies and asserts win/loss RATES + a boss-fight band + monotone difficulty.
 //
-// The verifier imports the SHARED applyDifficulty + bossVolley from src/config/difficulty.js,
-// so "Hard" and the boss volley/enrage model are defined ONCE for both the game and this
-// contract (they cannot drift).
+// It imports the SAME pure generator + events + boss model the game runs (generator.js / events.js
+// / difficulty.js), so the contract and the game can never drift. Run: node scripts/verify-balance.mjs
 //
-// Policies (design Decision 9; difficulty-tiers 6.6):
-//  • clean   — best-side gates (max), dodge every dodgeable block, must-shoot every full-width
-//              block + enemy, DODGE the boss fan, NO power-ups. Must WIN with ZERO contact drain.
-//  • careless— worst-side gates (min), stand in every block + enemy, eat the boss fan, no
-//              power-ups. Must LOSE.
-//  • sloppy  — worst-side gates (min) but otherwise competent (dodge dodgeables, shoot mandatory
-//              blocks/enemies), no power-ups, eats the boss fan. Must LOSE.
-//  • undodged— best-side gates + competent run (like clean, zero contact drain) but EATS every
-//              boss volley, no power-ups. Anchors the boss HP/offense numbers — must drain hard.
-//
-// Three orthogonal policy traits:
-//   bestGates        = clean | undodged   (else worst-side gates)
-//   standInDodgeables= careless           (else dodge dodgeables, like clean)
-//   eatsBullets      = anything but clean
-import STAGE_1 from '../src/config/stage1.js'
-import STAGE_2 from '../src/config/stage2.js'
-import STAGE_3 from '../src/config/stage3.js'
-import { applyDifficulty, PRESETS, bossVolley } from '../src/config/difficulty.js'
+// Policies (mirror Game._update at fixed dt = 1/60):
+//   clean    — best-side gates (max), dodge dodgeables, shoot mandatory, DODGE the boss fan.
+//              Chained across depths (carry floored). Must WIN stages 1-5 with timer margin.
+//   sloppy   — worst-side gates (min), dodge dodgeables, shoot mandatory, EAT the fan. Must LOSE.
+//   careless — worst-side gates (min), STAND in dodgeables too, eat the fan. Must LOSE.
+//   undodged — best-side gates + competent run but EATS every boss volley → boss-drain anchor.
+
+import {
+  generateStage,
+  nominalArmy,
+  applyGate,
+  MAX_COUNT,
+  CLIMAX_INDEX,
+} from '../src/config/generator.js'
+import { EVENT_FX } from '../src/config/events.js'
+import { PRESETS, bossVolley } from '../src/config/difficulty.js'
 
 const DT = 1 / 60
-const BASE_STAGES = [STAGE_1, STAGE_2, STAGE_3]
 const TIERS = ['normal', 'hard']
-// undodged boss-drain lethal floors per stage (absolute slack floors, reused for both tiers —
-// design Decision 11). Undodged entry is tier-invariant (same gate path), Hard drains ≥ Normal.
-const DRAIN_FLOOR = [100, 110, 120]
+const SEEDS = 100
+const DEPTHS = 12 // depths 1..12 (index 0..11)
+const FINITE = CLIMAX_INDEX + 1 // stages 1..5 = index 0..4
 
-function applyGate(count, [t, v], cap) {
-  const r = t === 'add' ? count + v : t === 'mul' ? count * v : count - v
-  return Math.max(0, Math.min(cap, Math.round(r)))
-}
-
-// Simulate one stage from `startCount` under a policy. Mirrors Game per-frame order.
-function simulate(stage, startCount, policy) {
-  const bestGates = policy === 'clean' || policy === 'undodged'
-  const standInDodgeables = policy === 'careless'
-  const eatsBullets = policy !== 'clean'
-  const cap = stage.crowdCap
-  const d = stage.combat.perSoldierDPS
-  const fireRange = stage.combat.fireRange
-  const bossEntry = stage.boss.z - stage.bossStandoff
+// ── one-stage simulation, mirroring Game per-frame order ──
+function simulate(cfg, startCount, policy) {
+  const best = policy === 'clean' || policy === 'undodged'
+  const standDodge = policy === 'careless'
+  const eats = policy !== 'clean'
+  const dps = cfg.combat.perSoldierDPS
+  const fireRange = cfg.combat.fireRange
+  const bossEntry = cfg.boss.z - cfg.bossStandoff
 
   let count = startCount
-  let leaderZ = 0
-  let time = stage.timeLimit
+  let z = 0
+  let time = cfg.timeLimit
   let contactDrain = 0
-  let bossEntryCount = startCount
+  let sandLeft = 0
 
-  const gates = stage.gates.map((g) => ({ ...g, done: false })).sort((a, b) => a.z - b.z)
-  const blocks = stage.obstacles
-    .filter((o) => (standInDodgeables ? true : o.fullWidth))
+  const gates = cfg.gates.map((g) => ({ ...g, done: false })).sort((a, b) => a.z - b.z)
+  const blocks = cfg.obstacles
+    .filter((o) => (standDodge ? true : o.fullWidth))
     .map((o) => ({ z: o.z, hp: o.hp, done: false }))
-  const enemies = (stage.enemies || []).map((e) => ({
-    z: e.z,
-    hp: e.hp,
-    marchSpeed: e.marchSpeed || 0,
-    done: false,
-  }))
+  const enemies = (cfg.enemies || []).map((e) => ({ z: e.z, hp: e.hp, march: e.marchSpeed || 0, done: false }))
+  const mods = (cfg.modifiers || []).map((m) => ({ ...m, done: false })).sort((a, b) => a.z - b.z)
 
-  // ── RUN phase ──
+  // ── RUN ──
   let guard = 0
-  while (leaderZ < bossEntry) {
+  while (z < bossEntry) {
     if (++guard > 5_000_000) return fail('run-stuck')
-    const prevZ = leaderZ
-    leaderZ = Math.min(bossEntry, leaderZ + stage.runSpeed * DT)
+    const prevZ = z
+    const rs = cfg.runSpeed * (sandLeft > 0 ? EVENT_FX.SANDSTORM_SPEED_MULT : 1)
+    z = Math.min(bossEntry, z + rs * DT)
     time -= DT
+    if (sandLeft > 0) sandLeft = Math.max(0, sandLeft - DT)
 
-    for (const g of gates) {
-      if (!g.done && g.z > prevZ && g.z <= leaderZ) {
+    for (const g of gates)
+      if (!g.done && g.z > prevZ && g.z <= z) {
         g.done = true
-        const l = applyGate(count, g.left, cap)
-        const r = applyGate(count, g.right, cap)
-        count = bestGates ? Math.max(l, r) : Math.min(l, r)
+        const l = applyGate(count, g.left)
+        const r = applyGate(count, g.right)
+        count = best ? Math.max(l, r) : Math.min(l, r)
       }
-    }
     if (count <= 0) return lose('gate-wipe')
 
-    for (const e of enemies) if (!e.done && e.marchSpeed) e.z -= e.marchSpeed * DT
+    for (const m of mods)
+      if (!m.done && m.z > prevZ && m.z <= z) {
+        m.done = true
+        if (m.type === 'toll') count = Math.max(0, count - Math.round(count * EVENT_FX.TOLL_FRACTION))
+        else if (m.type === 'bonus') count = Math.min(MAX_COUNT, count + Math.round(count * EVENT_FX.BONUS_FRACTION))
+        else if (m.type === 'sandstorm') sandLeft = EVENT_FX.SANDSTORM_DURATION
+      }
 
-    // single-target focus fire: nearest engaged target ahead within fireRange
-    const F = count * d
+    for (const e of enemies) if (!e.done && e.march) e.z -= e.march * DT
+
+    const F = count * dps
     let target = null
     let tz = Infinity
-    for (const b of blocks)
-      if (!b.done && b.hp > 0 && b.z > leaderZ && b.z <= leaderZ + fireRange && b.z < tz) {
-        target = b
-        tz = b.z
-      }
-    for (const e of enemies)
-      if (!e.done && e.hp > 0 && e.z > leaderZ && e.z <= leaderZ + fireRange && e.z < tz) {
-        target = e
-        tz = e.z
-      }
-    if (target) {
-      target.hp -= F * DT
-      if (target.hp <= 0) {
-        target.hp = 0
-        target.done = true
-      }
-    }
+    for (const b of blocks) if (!b.done && b.hp > 0 && b.z > z && b.z <= z + fireRange && b.z < tz) { target = b; tz = b.z }
+    for (const e of enemies) if (!e.done && e.hp > 0 && e.z > z && e.z <= z + fireRange && e.z < tz) { target = e; tz = e.z }
+    if (target) { target.hp -= F * DT; if (target.hp <= 0) { target.hp = 0; target.done = true } }
 
-    // contacts (reached with hp left → leftover drains ceil(hp))
     for (const b of blocks)
-      if (!b.done && b.z <= leaderZ) {
-        const drain = Math.min(count, Math.ceil(b.hp))
-        count -= drain
-        contactDrain += drain
-        b.done = true
-      }
+      if (!b.done && b.z <= z) { const d = Math.min(count, Math.ceil(b.hp)); count -= d; contactDrain += d; b.done = true }
     for (const e of enemies)
-      if (!e.done && e.z <= leaderZ) {
-        const drain = Math.min(count, Math.ceil(e.hp))
-        count -= drain
-        contactDrain += drain
-        e.done = true
-      }
+      if (!e.done && e.z <= z) { const d = Math.min(count, Math.ceil(e.hp)); count -= d; contactDrain += d; e.done = true }
 
     if (count <= 0) return lose('contact-wipe')
     if (time <= 0) return lose('timeout-run')
   }
-  const runTime = stage.timeLimit - time
+  const runTime = cfg.timeLimit - time
 
-  // ── BOSS phase ── (shared volley model: drain = bullets × bulletDamage, with enrage)
-  bossEntryCount = count
-  const boss = stage.boss
-  let hp = boss.hp
-  let fightTime = 0
-  let fireTimer = 0
+  // ── BOSS ── (HP is army-scaled at entry — the #1 fix)
+  const boss = cfg.boss
+  const entryCount = count
+  const maxHp = Math.round((boss.hpBase || 0) + boss.hpPerArmy * count)
+  let hp = maxHp
+  let fight = 0
+  let fireT = 0
+  let frenzyLeft = boss.frenzy ? EVENT_FX.FRENZY_DURATION : 0
   guard = 0
   while (true) {
     if (++guard > 5_000_000) return fail('boss-stuck')
-    const F = count * d
-    hp -= F * DT // damage pre-removal
-    fightTime += DT
+    const F = count * dps
+    hp -= F * DT
+    fight += DT
     if (hp <= 0)
-      return { win: true, lose: false, contactDrain, endCount: count, runTime, fightTime, time, bossDrain: bossEntryCount - count }
+      return { win: true, lose: false, contactDrain, endCount: count, runTime, fightTime: fight, time, bossDrain: entryCount - count, entryCount }
     time -= DT
-    if (eatsBullets) {
-      const v = bossVolley(boss, hp / boss.hp) // SHARED model (live/config-max fraction)
-      fireTimer += DT
-      if (fireTimer >= v.interval) {
-        fireTimer -= v.interval
-        count = Math.max(0, count - v.bullets * boss.bulletDamage)
-      }
-      if (count <= 0) return lose('boss-bullets-wipe')
+    if (frenzyLeft > 0) frenzyLeft = Math.max(0, frenzyLeft - DT)
+    if (eats) {
+      const fm = frenzyLeft > 0 ? EVENT_FX.FRENZY_FIRE_MULT : 1
+      const v = bossVolley(boss, hp / maxHp, fm)
+      fireT += DT
+      if (fireT >= v.interval) { fireT -= v.interval; count = Math.max(0, count - v.bullets * boss.bulletDamage) }
+      if (count <= 0) return lose('boss-wipe')
     }
     if (time <= 0) return lose('timeout-boss')
   }
 
   function lose(reason) {
-    return { win: false, lose: true, contactDrain, endCount: count, reason, runTime: stage.timeLimit - time, time, bossDrain: bossEntryCount - count }
+    return { win: false, lose: true, contactDrain, endCount: count, reason, runTime: cfg.timeLimit - time, time, bossDrain: 0, entryCount: startCount }
   }
   function fail(reason) {
-    return { win: false, lose: true, contactDrain, endCount: count, reason, time }
+    return { win: false, lose: true, contactDrain, endCount: count, reason, time, bossDrain: 0, entryCount: startCount }
   }
 }
 
-// Closed-form "no 1-second melt" guard: a fully-buffed army AT THE CAP folds in dmgCap × rapidMult.
-function meltSeconds(stage) {
-  const t = stage.powerupTuning
-  const dps = stage.crowdCap * stage.combat.perSoldierDPS * t.dmgCap * t.rapidMult
-  return stage.boss.hp / dps
-}
-
-// Mandatory-threat engagement-window overlap (design Decision 10). Mandatory = full-width blocks
-// + enemies; window = [z − fireRange, z]. Enforced on Normal (authoring discipline); skipped on
-// Hard (relaxed Hard-only — the clean zero-drain bar still applies on both tiers).
-function hasMandatoryOverlap(stage) {
-  const r = stage.combat.fireRange
-  const wins = [
-    ...stage.obstacles.filter((o) => o.fullWidth).map((o) => [o.z - r, o.z]),
-    ...(stage.enemies || []).map((e) => [e.z - r, e.z]),
-  ].sort((a, b) => a[0] - b[0])
-  for (let i = 1; i < wins.length; i++) if (wins[i][0] < wins[i - 1][1]) return true
-  return false
-}
-
-// A gate pair is count-dependent iff its winner FLIPS somewhere in [1, cap] (design Decision 12 /
-// AC12) — neither side dominates the whole range.
-function gateFlips(left, right, cap) {
-  let leftWins = false
-  let rightWins = false
-  for (let c = 1; c <= cap; c++) {
-    const l = applyGate(c, left, cap)
-    const rr = applyGate(c, right, cap)
-    if (l > rr) leftWins = true
-    else if (rr > l) rightWins = true
-    if (leftWins && rightWins) return true
-  }
-  return false
-}
-
-function fmt(r) {
-  const t = r.win ? `run ${r.runTime.toFixed(1)}s + fight ${r.fightTime.toFixed(1)}s` : `reason=${r.reason}`
-  return `win=${r.win} drain=${r.contactDrain} end=${r.endCount} ${t}`
-}
-
-// ── run a full tier: clean chain across 3 stages + careless/sloppy chains + per-stage undodged ──
-function runTier(tierId) {
-  const stages = BASE_STAGES.map((s) => applyDifficulty(s, PRESETS[tierId]))
-
-  // clean chain (carry the army, floored to each stage's startCount)
-  const cleanStart = []
-  const clean = []
+// chain a policy across depths; carry floored to each stage's startCount
+function chain(seed, tier, policy, depths) {
+  const preset = PRESETS[tier]
+  const out = []
   let carry = 0
-  for (let i = 0; i < stages.length; i++) {
-    const start = i === 0 ? stages[i].startCount : Math.max(carry, stages[i].startCount)
-    cleanStart.push(start)
-    const r = simulate(stages[i], start, 'clean')
-    clean.push(r)
-    carry = r.endCount || 0
+  for (let idx = 0; idx < depths; idx++) {
+    const cfg = generateStage(idx, seed, preset)
+    const start = idx === 0 ? cfg.startCount : Math.max(carry, cfg.startCount)
+    const r = simulate(cfg, start, policy)
+    out.push({ idx, cfg, start, r })
+    if (!r.win) break // chain stops at the first loss
+    carry = r.endCount
   }
-  // clean from each stage's own floor (solvable from carry-floor)
-  const cleanFloor = stages.map((s) => simulate(s, s.startCount, 'clean'))
-
-  // careless + sloppy chains — must LOSE somewhere
-  const chainLoses = (policy) => {
-    let c = 0
-    for (let i = 0; i < stages.length; i++) {
-      const start = i === 0 ? stages[i].startCount : Math.max(c, stages[i].startCount)
-      const r = simulate(stages[i], start, policy)
-      if (r.lose) return { lost: true, stage: i + 1, r }
-      c = r.endCount
-    }
-    return { lost: false }
-  }
-  const careless = chainLoses('careless')
-  const sloppy = chainLoses('sloppy')
-
-  // undodged per stage from the clean carry-in (eats every volley → boss-drain anchor)
-  const undodged = stages.map((s, i) => simulate(s, cleanStart[i], 'undodged'))
-
-  return { stages, cleanStart, clean, cleanFloor, careless, sloppy, undodged }
+  return out
 }
 
-console.log('— Swarm Run balance check (3 stages × {Normal, Hard}, shared applyDifficulty) —')
-
-const results = {}
-for (const tier of TIERS) results[tier] = runTier(tier)
-
+// ── sweep ──
 const checks = []
+const add = (name, pass) => checks.push([name, pass])
 
+const stats = {}
 for (const tier of TIERS) {
-  const R = results[tier]
-  const T = tier.toUpperCase()
-  console.log(`\n══ ${T} ══`)
-  for (let i = 0; i < 3; i++) {
-    const s = R.stages[i]
-    const c = R.clean[i]
-    const cf = R.cleanFloor[i]
-    const u = R.undodged[i]
-    const total = c.win ? (c.runTime + c.fightTime) : NaN
-    console.log(`  stage${i + 1} (entry ${R.cleanStart[i]} → ${c.endCount}):`)
-    console.log(`    clean:    ${fmt(c)}  total ${isNaN(total) ? '—' : total.toFixed(1)}/${s.timeLimit.toFixed(1)}s`)
-    console.log(`    floor(${s.startCount}): ${fmt(cf)}`)
-    console.log(`    undodged: ${fmt(u)}  bossDrain=${u.bossDrain}`)
-    console.log(`    melt=${meltSeconds(s).toFixed(1)}s`)
+  let cleanWinAll = 0
+  let sloppyLoseBy5 = 0
+  let carelessLoseBy5 = 0
+  let fightBandFails = 0
+  let timerFails = 0
+  let monoFails = 0
+  const fightSamples = [] // [depth][...fightTimes]
+  for (let d = 0; d < DEPTHS; d++) fightSamples.push([])
 
-    checks.push([`${T} s${i + 1} clean wins`, c.win])
-    checks.push([`${T} s${i + 1} clean zero contact drain`, c.contactDrain === 0])
-    checks.push([`${T} s${i + 1} clean (floor) wins`, cf.win])
-    checks.push([`${T} s${i + 1} clean (floor) zero contact drain`, cf.contactDrain === 0])
-    checks.push([`${T} s${i + 1} clean within timer`, c.win && c.runTime + c.fightTime < s.timeLimit])
-    checks.push([`${T} s${i + 1} clean boss fight > 5s (no melt)`, c.win && c.fightTime > 5])
-    checks.push([`${T} s${i + 1} no 1s melt (buffed cap > 2.5s)`, meltSeconds(s) > 2.5])
-    checks.push([`${T} s${i + 1} undodged boss drain > ${DRAIN_FLOOR[i]} (boss lethal)`, u.bossDrain > DRAIN_FLOOR[i]])
-    // overlap authoring rule: enforced on Normal, SKIPPED on Hard (design Decision 10 / AC9)
-    if (tier === 'normal') checks.push([`${T} s${i + 1} no mandatory-threat overlap`, !hasMandatoryOverlap(s)])
-    // gate count-dependence (AC12) — tier-invariant, checked per tier for completeness
-    const allFlip = s.gates.every((g) => gateFlips(g.left, g.right, s.crowdCap))
-    checks.push([`${T} s${i + 1} all gates count-dependent`, allFlip])
+  for (let s = 0; s < SEEDS; s++) {
+    const cleanChain = chain(s, tier, 'clean', DEPTHS)
+    // clean must win every stage 1-5 with timer margin
+    let okFinite = true
+    for (let idx = 0; idx < FINITE; idx++) {
+      const c = cleanChain[idx]
+      if (!c || !c.r.win || c.r.runTime + c.r.fightTime > c.cfg.timeLimit - 2) okFinite = false
+    }
+    if (okFinite) cleanWinAll++
+
+    // boss-fight band + timer for every clean stage we reached (depths 1-12)
+    for (const c of cleanChain) {
+      if (c.r.win) {
+        fightSamples[c.idx].push(c.r.fightTime)
+        if (c.r.fightTime < 5 || c.r.fightTime > 18) fightBandFails++
+        if (c.r.runTime + c.r.fightTime > c.cfg.timeLimit) timerFails++
+      }
+    }
+
+    // sloppy + careless chains must lose within stages 1-5
+    const sloppy = chain(s, tier, 'sloppy', FINITE)
+    const careless = chain(s, tier, 'careless', FINITE)
+    if (sloppy.some((x) => !x.r.win) || sloppy.length < FINITE) sloppyLoseBy5++
+    if (careless.some((x) => !x.r.win) || careless.length < FINITE) carelessLoseBy5++
+
+    // monotone undodged boss-drain across depth (AC19b), using the clean carry-in
+    let prevDrain = -1
+    for (const c of cleanChain) {
+      const u = simulate(c.cfg, c.start, 'undodged')
+      const drain = u.bossDrain
+      if (prevDrain >= 0 && drain < prevDrain * 0.98) monoFails++
+      prevDrain = Math.max(prevDrain, drain)
+    }
   }
-  const cL = R.careless
-  const sL = R.sloppy
-  console.log(`  careless: ${cL.lost ? `LOSES at stage ${cL.stage} (${cL.r.reason})` : 'WINS (bad!)'}`)
-  console.log(`  sloppy:   ${sL.lost ? `LOSES at stage ${sL.stage} (${sL.r.reason})` : 'WINS (bad!)'}`)
-  checks.push([`${T} careless run loses (skill matters)`, cL.lost])
-  checks.push([`${T} sloppy run loses (gate sense + boss dodging matter)`, sL.lost])
+
+  stats[tier] = { cleanWinAll, sloppyLoseBy5, carelessLoseBy5, fightBandFails, timerFails, monoFails, fightSamples }
+
+  const T = tier.toUpperCase()
+  add(`${T} clean wins stages 1-5 with margin (100% of seeds)`, cleanWinAll === SEEDS)
+  add(`${T} sloppy loses by stage 5 (100% of seeds)`, sloppyLoseBy5 === SEEDS)
+  add(`${T} careless loses by stage 5 (100% of seeds)`, carelessLoseBy5 === SEEDS)
+  add(`${T} every clean boss fight in [5,18]s (no melt/stall)`, fightBandFails === 0)
+  add(`${T} every clean run+fight within timer`, timerFails === 0)
+  add(`${T} undodged boss-drain non-decreasing with depth (±2%)`, monoFails === 0)
 }
 
-// ── relative "Hard is tighter than Normal" checks (design Decision 11 / AC8) ──
-console.log('\n══ HARD vs NORMAL (relative) ══')
-for (let i = 0; i < 3; i++) {
-  const cn = results.normal.clean[i]
-  const ch = results.hard.clean[i]
-  const sn = results.normal.stages[i]
-  const sh = results.hard.stages[i]
-  const un = results.normal.undodged[i]
-  const uh = results.hard.undodged[i]
-  const marginN = sn.timeLimit - (cn.runTime + cn.fightTime)
-  const marginH = sh.timeLimit - (ch.runTime + ch.fightTime)
-  console.log(`  stage${i + 1}: clean margin  Normal ${marginN.toFixed(1)}s  →  Hard ${marginH.toFixed(1)}s`)
-  console.log(`           undodged drain Normal ${un.bossDrain}  →  Hard ${uh.bossDrain}`)
-  checks.push([`s${i + 1} Hard clean margin tighter than Normal`, cn.win && ch.win && marginH < marginN])
-  checks.push([`s${i + 1} Hard undodged drain ≥ Normal`, uh.bossDrain >= un.bossDrain])
+// AC19a — nominalArmy strictly increasing with depth (the difficulty backbone)
+let monoArmy = true
+for (let d = 1; d < DEPTHS; d++) if (nominalArmy(d) <= nominalArmy(d - 1)) monoArmy = false
+add('nominalArmy strictly increasing with depth', monoArmy)
+
+// AC4 — every generated growth gate is count-dependent (winner flips between small + large count)
+let allFlip = true
+for (const tier of TIERS)
+  for (let s = 0; s < 10; s++)
+    for (let idx = 0; idx < DEPTHS; idx++) {
+      const cfg = generateStage(s, s * 7 + 1, PRESETS[tier])
+      for (const g of cfg.gates) {
+        const lo = applyGate(1, g.left) > applyGate(1, g.right) ? 'L' : applyGate(1, g.right) > applyGate(1, g.left) ? 'R' : 'T'
+        const hiL = applyGate(1e6, g.left), hiR = applyGate(1e6, g.right)
+        const hi = hiL > hiR ? 'L' : hiR > hiL ? 'R' : 'T'
+        if (lo === hi) allFlip = false
+      }
+    }
+add('every growth gate count-dependent (winner flips 1 → 1e6)', allFlip)
+
+// ── report ──
+console.log('— Swarm Run statistical balance check —')
+console.log(`  ${SEEDS} seeds × depths 1-${DEPTHS} × {Normal, Hard} × {clean, sloppy, careless, undodged}\n`)
+for (const tier of TIERS) {
+  const st = stats[tier]
+  console.log(`══ ${tier.toUpperCase()} ══`)
+  console.log(`  clean wins 1-5: ${st.cleanWinAll}/${SEEDS}  ·  sloppy loses: ${st.sloppyLoseBy5}/${SEEDS}  ·  careless loses: ${st.carelessLoseBy5}/${SEEDS}`)
+  console.log(`  fight-band fails: ${st.fightBandFails}  ·  timer fails: ${st.timerFails}  ·  mono fails: ${st.monoFails}`)
+  const med = st.fightSamples.map((a) => {
+    if (!a.length) return '—'
+    const s = [...a].sort((x, y) => x - y)
+    return s[s.length >> 1].toFixed(1)
+  })
+  console.log(`  median clean fight by depth: ${med.join(' ')}`)
 }
 
 console.log('\nCHECKS:')
@@ -309,10 +252,5 @@ for (const [name, pass] of checks) {
   console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${name}`)
   if (!pass) ok = false
 }
-
-console.log(
-  ok
-    ? '\nPASS: all 3 stages clean-clearable with margin on both tiers; Hard is tighter; skill matters.'
-    : '\nFAIL: balance broken.'
-)
+console.log(ok ? '\nPASS: procedural balance holds across the sweep.' : '\nFAIL: balance broken.')
 process.exit(ok ? 0 : 1)

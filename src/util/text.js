@@ -8,6 +8,18 @@ import * as THREE from 'three'
 const CANVAS_W = 256
 const CANVAS_H = 128
 
+// Compact formatter for in-world plates/tags (redesign: army + boss HP are unbounded and can reach
+// 7–10 digits, which would clip the fixed 256px canvas). The DOM HUD shows the full integer (no
+// clip); the 3D sprites use this. < 10k → raw; else 12.3k / 1.4M / 2.1B / 3.0T.
+export function formatCount(n) {
+  const v = Math.max(0, Math.round(n))
+  if (v < 10000) return String(v)
+  if (v < 1e6) return (v / 1e3).toFixed(v < 1e5 ? 1 : 0) + 'k'
+  if (v < 1e9) return (v / 1e6).toFixed(v < 1e7 ? 1 : 0) + 'M'
+  if (v < 1e12) return (v / 1e9).toFixed(1) + 'B'
+  return (v / 1e12).toFixed(1) + 'T'
+}
+
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath()
   ctx.moveTo(x + r, y)

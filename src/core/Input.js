@@ -14,6 +14,7 @@ export class Input {
     this.keys = { left: false, right: false }
     this.dragging = false
     this.lastClientX = 0
+    this.sensMult = 1 // steer-sensitivity multiplier (sandstorm event drops it — feel-only)
 
     this._bind()
   }
@@ -31,7 +32,7 @@ export class Input {
       const dx = e.clientX - this.lastClientX
       this.lastClientX = e.clientX
       const rect = el.getBoundingClientRect()
-      this.x += (dx / rect.width) * (this.limit * 2) * DRAG_SENS
+      this.x += (dx / rect.width) * (this.limit * 2) * DRAG_SENS * this.sensMult
       this._clamp()
     })
     const end = (e) => {
@@ -70,8 +71,8 @@ export class Input {
   }
 
   update(dt) {
-    if (this.keys.left) this.x -= KEY_SPEED * dt
-    if (this.keys.right) this.x += KEY_SPEED * dt
+    if (this.keys.left) this.x -= KEY_SPEED * dt * this.sensMult
+    if (this.keys.right) this.x += KEY_SPEED * dt * this.sensMult
     this._clamp()
   }
 
@@ -79,5 +80,6 @@ export class Input {
     this.x = 0
     this.dragging = false
     this.keys.left = this.keys.right = false
+    this.sensMult = 1
   }
 }

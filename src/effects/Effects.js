@@ -1,4 +1,4 @@
-import { makeTextSprite, updateTextSprite } from '../util/text.js'
+import { makeTextSprite, updateTextSprite, formatCount } from '../util/text.js'
 import { ParticlePool } from './ParticlePool.js'
 
 // Cosmetic effects facade (design 6.2), owned by Game. Bundles the pooled particle
@@ -44,7 +44,7 @@ export class Effects {
     if (!delta) return
     const sprite = this.texts.find((s) => !s.userData.fx.active)
     if (!sprite) return // pool full — drop (cap sized for worst-case concurrency)
-    const text = (delta > 0 ? '+' : '−') + Math.abs(delta)
+    const text = (delta > 0 ? '+' : '−') + formatCount(Math.abs(delta))
     sprite.userData.opts.color = delta > 0 ? GREEN : RED
     updateTextSprite(sprite, text) // canvas redraw — only here, never per frame
     sprite.position.set(x + (Math.random() - 0.5) * 0.4, y, z)

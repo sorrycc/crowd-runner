@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { makeTextSprite, updateTextSprite } from '../util/text.js'
+import { makeTextSprite, updateTextSprite, formatCount } from '../util/text.js'
 import { makeSoldierMaterial, SOLDIER_ANIM } from '../util/soldier.js'
 
 // A marching enemy squad (design 6.5). Rows of red soldiers (one InstancedMesh, one
@@ -49,7 +49,7 @@ export class Enemy {
     this.group.add(this.mesh)
     this._layout(this.maxVisible)
 
-    this.tag = makeTextSprite(String(Math.ceil(this.hp)), {
+    this.tag = makeTextSprite(formatCount(Math.ceil(this.hp)), {
       scale: 1.4,
       accent: '#fecaca',
       bg: 'rgba(127,29,29,0.95)',
@@ -109,7 +109,7 @@ export class Enemy {
     this._layout(visible)
     const shown = Math.max(0, Math.ceil(this.hp))
     if (shown !== this._hpShown) {
-      updateTextSprite(this.tag, shown)
+      updateTextSprite(this.tag, formatCount(shown))
       this._hpShown = shown
     }
   }

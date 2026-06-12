@@ -1,38 +1,40 @@
-// ── Difficulty transform + shared boss model (design 2026-06-12-difficulty-tiers) ──
-// SINGLE SOURCE OF TRUTH for what "Hard" means and for the boss volley/enrage model,
+// ── Difficulty tiers + shared boss model (redesign 2026-06-12-endless-procedural) ──
+// SINGLE SOURCE OF TRUTH for what "Hard" means and for the boss volley/enrage/frenzy model,
 // imported by BOTH the game (src/Game.js, src/entities/Boss.js) and the headless verifier
-// (scripts/verify-balance.mjs). This module imports NOTHING — it is pure data + pure math,
-// so importing it on the THREE side (Boss.js) can never pull THREE into the no-THREE
-// verifier, and vice-versa (design Decision 1/6, reviewer R2 pt 2).
+// (scripts/verify-balance.mjs). This module imports NOTHING — pure data + pure math — so it can
+// never pull THREE into the no-THREE verifier (or generator), and vice-versa.
+//
+// In the redesign, tiers are a CURVE OFFSET + a small retained multiplier set (design Decision 6):
+//  • curveOffset shifts level = index + curveOffset, so Hard plays the difficulty curve ~2 stages
+//    ahead at every depth (bigger boss HP-per-army, denser/tankier threats, bigger gate values).
+//    The per-index magnitude ramp lives in the generator (src/config/generator.js).
+//  • mult applies ONLY the 4 "danger-feel" knobs an index offset can't express. It must NOT touch
+//    boss.hp/hpPerArmy, obstacle.hp, enemy.hp, marchSpeed, runSpeed or reinforce — those are
+//    already raised by the offset, and double-counting them would break the army-scaled fight-time
+//    and clean-clear invariants on Hard (design Decision 2/3/6).
 
-// Stage files stay the NORMAL baseline. HARD is a runtime multiplier transform — no
-// duplicated per-tier config files (DRY). Multipliers are verifier-tuned.
+export const BULLET_SPEED_CAP = 34 // dodgeability ceiling — the fan eat-all geometry assumes this
+
 export const PRESETS = {
-  normal: { id: 'normal', label: 'NORMAL', mult: null }, // identity (still deep-clones)
+  normal: { id: 'normal', label: 'NORMAL', curveOffset: 0, mult: null },
   hard: {
     id: 'hard',
     label: 'HARD',
+    curveOffset: 2, // Hard ≈ Normal depth +2 on the curve
     mult: {
-      timeLimit: 0.85, // tighter clock
-      runSpeed: 1.12, // faster auto-run
-      bossHp: 1.3, // tankier boss
+      timeLimit: 0.9, // tighter clock
       bossFireInterval: 0.85, // fires more often
-      bossBulletSpeed: 1.15, // harder to dodge
-      bossBulletsAdd: 2, // wider fan
-      obstacleHp: 1.2, // beefier blocks
-      enemyHp: 1.2, // beefier squads
-      marchSpeed: 1.15, // squads close faster
-      reinforce: 0.8, // power-up reinforcements weaker
+      bossBulletSpeed: 1.15, // harder to dodge (re-clamped to BULLET_SPEED_CAP)
+      bossBulletsAdd: 1, // one extra fan bullet
     },
   },
 }
 
-// Pure transform → a NEW stage object every call (design Decision 2, reviewer R2 pt 8).
-// Normal applies no multipliers but still returns a fresh deep clone tagged with the tier,
-// so there is no asymmetric aliasing of the imported stage singleton. Stage configs are pure
-// JSON-serializable data (no functions), so structuredClone-via-JSON is safe.
-// NOT transformed: boss.z (track length is tier-invariant), crowdCap, perSoldierDPS, gate
-// values (gate math identical across tiers), boss.bulletDamage, boss.enrage, bossStandoff.
+// Pure transform → a NEW stage object every call. Normal applies no multipliers but still returns
+// a fresh deep clone tagged with the tier, so there is no asymmetric aliasing. Stage configs are
+// pure JSON-serializable data, so structuredClone-via-JSON is safe.
+// REWRITTEN for the redesign: ONLY the 4 retained feel-fields (design Decision 6). Everything else
+// (HP, density, gate values, runSpeed) is handled by the generator's curve offset.
 export function applyDifficulty(stage, preset) {
   const p = preset || PRESETS.normal
   const s = JSON.parse(JSON.stringify(stage))
@@ -41,33 +43,34 @@ export function applyDifficulty(stage, preset) {
   const m = p.mult
   if (m) {
     s.timeLimit = stage.timeLimit * m.timeLimit
-    s.runSpeed = stage.runSpeed * m.runSpeed
-    s.boss.hp = Math.round(stage.boss.hp * m.bossHp)
     s.boss.fireInterval = stage.boss.fireInterval * m.bossFireInterval
-    s.boss.bulletSpeed = stage.boss.bulletSpeed * m.bossBulletSpeed
     s.boss.bullets = stage.boss.bullets + m.bossBulletsAdd
-    for (const o of s.obstacles) o.hp = Math.round(o.hp * m.obstacleHp)
-    for (const e of s.enemies) {
-      e.hp = Math.round(e.hp * m.enemyHp)
-      if (e.marchSpeed) e.marchSpeed *= m.marchSpeed
-    }
-    s.powerupTuning.reinforce = Math.round(stage.powerupTuning.reinforce * m.reinforce)
+    s.boss.bulletSpeed = Math.min(stage.boss.bulletSpeed * m.bossBulletSpeed, BULLET_SPEED_CAP)
   }
   return s
 }
 
-// Shared boss volley/enrage model (design Decision 6). ONE source for the game + the verifier
-// so the offense math can never drift. Takes an explicit hpFraction (0..1) so the two callers
-// with different "hp" conventions agree (reviewer R2 pt 1): the Boss instance passes
-// `this.hpFraction` (= live this.hp / this.maxHp); the verifier passes `hp / boss.hp`
-// (live / config-max). `boss` only needs { fireInterval, bullets, enrage }.
-// Enrage (under boss.enrage.below HP fraction): shorter interval + extra bullets.
-export function bossVolley(boss, hpFraction) {
+// Shared boss volley/enrage/frenzy model (design Decision 6/12). ONE source for the game + the
+// verifier so the offense cadence can never drift. Takes an explicit hpFraction (0..1) so the two
+// callers with different "hp" conventions agree: the Boss instance passes `this.hpFraction`
+// (= live this.hp / this.maxHp); the verifier passes `hp / maxHp`.
+//
+// Composition (design Decision 12, reviewer R2 pt1): the interval is the base interval, times the
+// enrage multiplier (when under enrage.below HP), times the frenzy multiplier (when a frenzy event
+// is active during the boss fight) — floored at MIN_FIRE_INTERVAL so enrage×frenzy can't produce a
+// machine-gun spike. `boss` only needs { fireInterval, bullets, enrage }.
+const MIN_FIRE_INTERVAL = 0.45
+
+export function bossVolley(boss, hpFraction, frenzyMult = 1) {
   const e = boss.enrage
   const enraged = hpFraction < e.below
+  const interval = Math.max(
+    MIN_FIRE_INTERVAL,
+    boss.fireInterval * (enraged ? e.fireIntervalMult : 1) * frenzyMult
+  )
   return {
     enraged,
-    interval: enraged ? boss.fireInterval * e.fireIntervalMult : boss.fireInterval,
+    interval,
     bullets: enraged ? boss.bullets + e.bulletsAdd : boss.bullets,
   }
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { makeTextSprite, updateTextSprite } from '../util/text.js'
+import { makeTextSprite, updateTextSprite, formatCount } from '../util/text.js'
 import { bossVolley } from '../config/difficulty.js'
 
 // End-of-stage boss (design 6.6 / 2026-06-12-gltf-soldiers-crowd-boss §6.7). The army's
@@ -134,7 +134,7 @@ export class Boss {
       this.smoke.push({ mesh, mat, ox: sx, oy: sy, oz: sz, phase })
     }
 
-    this.tag = makeTextSprite(String(this.hp), {
+    this.tag = makeTextSprite(formatCount(this.hp), {
       scale: 2.2,
       accent: '#ef4444',
       bg: 'rgba(17,24,39,0.95)',
@@ -149,17 +149,26 @@ export class Boss {
     return Math.max(0, this.hp) / this.maxHp
   }
 
+  // Army-scaled boss HP (redesign #1). Game calls this at RUN→BOSS with hp = base + k·armyAtEntry,
+  // so a bigger army faces a proportionally bigger boss and the fight lasts a ~constant time.
+  setHp(hp) {
+    this.maxHp = Math.max(1, hp)
+    this.hp = this.maxHp
+    this._hpShown = -1 // force the tag to redraw on the next update
+  }
+
   // `firepower` already folds in count, dmgMult and rapid-fire (computed by Game). Fires into
   // the supplied boss-bullet pool, aimed at (armyX, armyZ). Returns true on the frame it fires
   // (a pure signal so Game plays the boss-shot SFX + muzzle flash without coupling Boss to the
   // AudioManager / Effects — design Decision 4).
-  update(dt, firepower, armyX, armyZ, bossBullets) {
+  update(dt, firepower, armyX, armyZ, bossBullets, frenzyMult = 1) {
     this.hp -= firepower * dt
     this._t += dt
 
     // Active cadence + fan size from the SHARED volley model (enrage under ~33% HP fires more
-    // often with extra bullets) — single source with the verifier (design Decision 6).
-    const volley = bossVolley(this, this.hpFraction)
+    // often with extra bullets; frenzy event shortens the interval) — single source with the
+    // verifier (design Decision 6/12), so the offense cadence can never drift.
+    const volley = bossVolley(this, this.hpFraction, frenzyMult)
     this._enraged = volley.enraged
     let fired = false
     if (this.hp > 0) {
@@ -214,7 +223,7 @@ export class Boss {
 
     const shown = Math.max(0, Math.ceil(this.hp))
     if (shown !== this._hpShown) {
-      updateTextSprite(this.tag, shown)
+      updateTextSprite(this.tag, formatCount(shown))
       this._hpShown = shown
     }
 

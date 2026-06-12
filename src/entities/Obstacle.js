@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { makeTextSprite, updateTextSprite } from '../util/text.js'
+import { makeTextSprite, updateTextSprite, formatCount } from '../util/text.js'
 
 // A destructible road block (design 6.4). `hp` is a float that drains under fire
 // while the army is *engaged* (leaderX ∈ xRange). The HP sprite ticks down live
@@ -46,7 +46,7 @@ export class Obstacle {
       }
     }
 
-    this.tag = makeTextSprite(String(Math.ceil(this.hp)), {
+    this.tag = makeTextSprite(formatCount(Math.ceil(this.hp)), {
       scale: 1.5,
       accent: '#ffffff',
       bg: 'rgba(17,24,39,0.95)',
@@ -80,7 +80,7 @@ export class Obstacle {
     this.mat.color.copy(LOW).lerp(FULL, frac)
     const shown = Math.max(0, Math.ceil(this.hp))
     if (shown !== this._hpShown) {
-      updateTextSprite(this.tag, shown)
+      updateTextSprite(this.tag, formatCount(shown))
       this._hpShown = shown
     }
   }
