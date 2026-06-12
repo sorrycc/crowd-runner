@@ -60,7 +60,7 @@ function worstPath() {
 const worst = worstPath()
 const worstFight = fight(worst)
 
-console.log('— Crowd Runner balance check —')
+console.log('— Swarm Run balance check —')
 bp.trail.forEach((s) => console.log('  ' + s))
 console.log(`best-path crowd at boss:      ${bp.count}`)
 console.log(`win threshold (break-even):   ~${threshold.toFixed(1)} crowd`)

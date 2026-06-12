@@ -1,4 +1,4 @@
-# Crowd Runner
+# Swarm Run
 
 A Count Masters–style hypercasual crowd-runner built with **Three.js + Vite**, using
 only simple primitives (no external assets, no audio). Auto-run down a 3D road, steer
